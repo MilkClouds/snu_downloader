@@ -1,4 +1,4 @@
 selenium
-aiohttp
-bs4
 python-dotenv
+bs4
+yt-dlp

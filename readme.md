@@ -3,17 +3,29 @@ Downloads all videos from the lecture.
 
 Works on new eTL(Canvas)
 
+- Support downloading lecture video(including snu-cms, youtube-embedded lectures)
+- Support downloading lecture materials(files)(ppt, pdf, ...)
+- Support multithreading (**I strongly recommend you to use only one thread**)
+
+
+# TODO
+- [ ] Fancy CLI interface
+
+
 # Prerequisites
+
 ## Python3 packages
 ```
-pip3 install selenium python-dotenv
+pip install -r requirements.txt
 ```
 ## ChromeDriver
 * A Chromium-based browser is required. (e.g. Chrome, Edge)
 * ChromeDriver should be executable using the default shell
 You can get ChromeDriver [here](https://chromedriver.chromium.org/home).
 
-Caution: version mismatch may lead to malfunction.
+Caution: version mismatch may lead to malfunction.  
+
+You can get chromium by `choco install chromium` on Windows, when you use chocolatey.
 
 ### For macOS
 After you unarchive the ChromeDriver, move the executable to `/usr/local/bin`.
@@ -35,6 +47,16 @@ options:
   -u USERNAME   SNU username
   -p            SNU password
 ```
+
+Or you can define `.env` file as below (For further exaplanation, refer to [python-dotenv](https://github.com/theskumar/python-dotenv), You should add a `.env` file in the same directory of `main.py`)
+```
+lectureId=123456
+username=(your_username)
+password=(your_password)
+```
+
+Make sure `.env` file containing password not to be leaked.
+
 ## Example
 ```
 python3 main.py  -l 123456 -u mysnuid -p
@@ -65,5 +87,5 @@ By using this program, you agree to the above terms.
 ```
 
 # Credit
-Special thanks for [MilkCLouds](https://github.com/MilkClouds) for providing the base of this program.
+- [junukwon7](https://github.com/junukwon7)
 
