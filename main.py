@@ -69,7 +69,7 @@ def main():
     Path(args.dir).mkdir(parents=True, exist_ok=True)
 
     hrefs = [element.get_attribute("href") for element in driver.find_elements(By.CSS_SELECTOR, "div.module-item-title > span > a")]
-    [download_page(driver, href) for href in hrefs[:4]]
+    [download_page(driver, href) for href in hrefs]
 
     driver.quit()
 
