@@ -1,77 +1,155 @@
-import selenium, re, argparse, traceback, logging, yt_dlp
-from multiprocessing.dummy import Pool
+import time
+import selenium, threading, re, argparse, traceback, logging
+import argparse, os, getpass, dotenv
+import functools, pathlib, shutil, requests
 from pathlib import Path
+from threading import Lock
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from tqdm.auto import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
+from concurrent.futures import ThreadPoolExecutor
+
 from misc import yes_or_no, PasswordPromptAction, environ_or_required, download
 
-root = "https://myetl.snu.ac.kr"
-# Limited to maximum 1 thread once. Modify at **your own risk.**
-MAX_THREADS = 1
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+class Lecture:
+    def __init__(self, lectureId: str, driver: webdriver.Chrome, downloadPath: str):
+        self.lectureId = lectureId
+        self.lectureName = None
+        self.downloadPath = downloadPath
+        self.lectureFiles = []
+        self.driver = driver
+        self.hrefs = []
+        self.valid = False
+        try:
+            self.driver.get(Downloader.webSiteRoot + f"/courses/{self.lectureId}")
+            self.driver.implicitly_wait(5)
+            self.downloadPath /= re.sub(r'[\\/:"*?<>|]+', '', self.driver.title)
+            self.lectureName = self.driver.title
 
-def file_download(contentUrl: str, fileName: str, driver: webdriver.Chrome, cookies: dict):
-    file = args.dir / re.sub(r'[\\/:"*?<>|]+', '', fileName)
-    if file.exists():
-        logging.info(f"Skipping [ {file} ] since it already exists")
-        return
-    logging.info(f"Downloading [ {file.name} ]")
-    download(contentUrl, file, headers={"Referer": "https://lcms.snu.ac.kr"}, cookies=cookies)
+            Path(self.downloadPath).mkdir(parents=True, exist_ok=True)
 
-def yt_download(id: int):
-    # resize concurrent-fragments if necessary
-    ydl_opts = {"concurrent-fragments": 4, "paths": str(args.dir)}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download(id)
+            self.hrefs = [element.get_attribute("href") for element in self.driver.find_elements(By.CSS_SELECTOR, "div.module-item-title > span > a")]
+            self.valid = True
 
-def download_page(driver: webdriver.Chrome, href):
-    if not href[-1].isnumeric():
-        return
-    driver.get(href)
-    driver.implicitly_wait(1)
-    cookies = {cookie['name']: cookie['value'] for cookie in driver.get_cookies()}
-    try:
-        element = driver.find_element(By.CSS_SELECTOR, "#content > div:nth-child(2) > span > a")
-        if element.get_attribute("download"):
-            pool.apply_async(file_download, args=(element.get_attribute("href"), element.get_attribute("innerText")[9:], driver, cookies))
-    except:
-        pass
+        except Exception as e:
+            print(e)
+            logging.info(f"Failed to get lecture [ {self.lectureId} ]")
 
-    try:
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        driver.switch_to.frame(iframes[1])
-        driver.switch_to.frame(driver.find_element(By.TAG_NAME, "iframe"))
-        src = driver.page_source
-        if "onYouTubeIframeAPIReady" in src:
-            id = re.search("videoId: '(.+?)'", src)[1]
-            pool.apply_async(yt_download, args=(id, ))
+    def download_page(self, href: str):
+        ret = []
+
+        if not href[-1].isnumeric():
             return
-        contentId = driver.find_element(By.NAME, "thumbnail").get_attribute("content").split("/")[-1]
-        contentUrl = f"https://snu-cms-object.cdn.ntruss.com/contents/snu0000001/{contentId}/contents/media_files/screen.mp4"
-        pool.apply_async(file_download, args=(contentUrl, f"{driver.title}.mp4", driver, cookies))
-    except:
-        pass
+        self.driver.get(href)
+        self.driver.implicitly_wait(1)
 
-def main():
-    options = webdriver.ChromeOptions()
-    # disable this if necessary (for debugging purposes)
-    options.add_argument('--headless')
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
-    driver = webdriver.Chrome(options = options)
-    url = root + f"/courses/{args.lectureId}/modules"
-    driver.get(url)
-    driver.find_element(By.ID, "si_id").send_keys(args.username)
-    driver.find_element(By.ID, "si_pwd").send_keys(args.password)
-    driver.find_element(By.CLASS_NAME, "btn_login").click()
-    driver.get(url)
-    driver.implicitly_wait(5)
-    args.dir /= re.sub(r'[\\/:"*?<>|]+', '', driver.find_element(By.CSS_SELECTOR, "#breadcrumbs > ul > li:nth-child(2) > a > span").get_attribute("innerText"))
-    Path(args.dir).mkdir(parents=True, exist_ok=True)
+        try:
+            element = self.driver.find_element(By.CSS_SELECTOR, "#content > div:nth-child(2) > span > a")
+            if element.get_attribute("download"):
+                self.download_file(element.get_attribute("href"), element.get_attribute("innerText")[9:])
+        except:
+            pass
 
-    hrefs = [element.get_attribute("href") for element in driver.find_elements(By.CSS_SELECTOR, "div.module-item-title > span > a")]
-    [download_page(driver, href) for href in hrefs]
+        try:
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            self.driver.switch_to.frame(iframes[1])
+            self.driver.switch_to.frame(self.driver.find_element(By.TAG_NAME, "iframe"))
+            contentId = self.driver.find_element(By.NAME, "thumbnail").get_attribute("content").split("/")[-1]
+            contentUrl = f"https://snu-cms-object.cdn.ntruss.com/contents/snu0000001/{contentId}/contents/media_files/screen.mp4"
+            self.download_file(contentUrl, f"{self.driver.title}.mp4")
+        except:
+            pass
 
-    driver.quit()
+    def download_all(self):
+        logging.info("Downloading all files in lecture [ {} ]".format(self.lectureName))
+        [self.download_page(href) for href in self.hrefs]
+
+    def download_file(self, contentUrl: str, fileName: str):
+        file = self.downloadPath / re.sub(r'[\\/:"*?<>|]+', '', fileName)
+        if file.exists():
+            logging.info(f"Skipping [ {file} ] since it already exists")
+            return
+        cookies = {cookie['name']: cookie['value'] for cookie in self.driver.get_cookies()}
+
+        logging.info(f"Found [ {file} ]")
+
+        future = Downloader.downloadExecutor.submit(download, contentUrl, file, headers={"Referer": "https://lcms.snu.ac.kr"}, cookies=cookies)
+        Downloader.futures.append(future)
+
+
+class Downloader:
+
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+    @classmethod
+    def init(cls, outputDir: str, webSiteRoot: str, max_threads: int):
+        cls.targetLectures = []
+        cls.outputDir = outputDir
+        cls.webSiteRoot = webSiteRoot
+        cls.authenticated = False
+        cls.completedDownloads = 0
+        cls.totalDownloads = 0
+        cls.downloadExecutor = ThreadPoolExecutor(max_workers=max_threads)
+        cls.lectureExecutor = ThreadPoolExecutor(max_workers=1)
+        cls.futures = []
+
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless')
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        cls.driver = webdriver.Chrome(options = options)
+
+    @classmethod
+    def authenticate(cls, username, password) -> bool:
+        cls.driver.get(cls.webSiteRoot)
+        cls.driver.find_element(By.ID, "si_id").send_keys(username)
+        cls.driver.find_element(By.ID, "si_pwd").send_keys(password)
+        cls.driver.find_element(By.CLASS_NAME, "btn_login").click()
+
+        cls.driver.get(cls.webSiteRoot)
+        cls.driver.implicitly_wait(1)
+
+        try:
+            cls.driver.find_element(By.CLASS_NAME, "btn_login")
+        except:
+            logging.info("Successfully authenticated")
+            cls.authenticated = True
+            return True
+
+        logging.info("Failed authentication")
+        return False
+
+    @classmethod
+    def add_lecture(cls, lectureId) -> bool:
+        if not cls.authenticated:
+            logging.info("Not authenticated")
+            return False
+        if lectureId in cls.targetLectures:
+            return False
+        else:
+            lecture = Lecture(lectureId, cls.driver, cls.outputDir)
+            logging.info("Lecture [ {} ] added".format(lecture.lectureName))
+            if lecture.valid:
+                cls.targetLectures.append(lecture)
+                return True
+        return False
+    
+    @classmethod
+    def download_all_lectures(cls):
+        if not cls.authenticated:
+            logging.info("Not authenticated")
+        logging.info("Downloading all lectures")
+
+        for lecture in cls.targetLectures:
+            cls.lectureExecutor.submit(lecture.download_all)
+
+        cls.lectureExecutor.shutdown(wait=True)
+        cls.downloadExecutor.shutdown(wait=True)
+
+    @classmethod
+    def quit(cls):
+        cls.driver.quit()
+
 
 if __name__ == "__main__":
     logging.info("==============================================================================================================================")
@@ -94,11 +172,12 @@ if __name__ == "__main__":
     parser.add_argument("-p", dest = "password", action = PasswordPromptAction, type = str, help = "SNU password", **environ_or_required('password'))
     args = parser.parse_args()
 
+
     try:
-        with Pool(MAX_THREADS) as pool:
-            main()
-            pool.close()
-            pool.join()
+        Downloader.init(outputDir=args.dir, webSiteRoot="https://myetl.snu.ac.kr", max_threads=1)
+        Downloader.authenticate(args.username, args.password)
+        Downloader.add_lecture(args.lectureId)
+        Downloader.download_all_lectures()
     except selenium.common.exceptions.WebDriverException:
         logging.info("[!] Download chromedriver https://chromedriver.chromium.org/downloads")
         traceback.print_exc()
