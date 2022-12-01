@@ -1,4 +1,4 @@
-import argparse, os, getpass, dotenv, time
+import argparse, os, getpass, dotenv, re, logging, yt_dlp
 import functools, pathlib, shutil, requests
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
