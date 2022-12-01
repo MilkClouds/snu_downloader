@@ -5,7 +5,7 @@ Works on new eTL(Canvas)
 
 - Support downloading lecture video(including snu-cms, youtube-embedded lectures)
 - Support downloading lecture materials(files)(ppt, pdf, ...)
-- Support multithreading (**I strongly recommend you to use only one thread**)
+- Support multithreading on lecture scraping & downloading (**I strongly recommend you to use only one thread**)
 
 
 # TODO
