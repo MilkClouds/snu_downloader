@@ -14,15 +14,15 @@ class Lecture:
         self.lectureFiles = []
 
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless')
+        # options.add_argument('--headless')
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.driver = webdriver.Chrome(options = options)
         self.driver.implicitly_wait(2)
         self.driver.get(Downloader.urlRoot)
 
-        self.driver.find_element(By.ID, "si_id").send_keys(args.username)
-        self.driver.find_element(By.ID, "si_pwd").send_keys(args.password)
-        self.driver.find_element(By.CLASS_NAME, "btn_login").click()
+        self.driver.find_element(By.CSS_SELECTOR, "input#login_id").send_keys(args.username)
+        self.driver.find_element(By.CSS_SELECTOR, "input#login_pwd").send_keys(args.password)
+        self.driver.find_element(By.CSS_SELECTOR, 'input[value="로그인"]').click()
 
         self.hrefs = []
         self.valid = False
@@ -91,8 +91,8 @@ class Lecture:
 
 
 class Downloader:
-    LECTURE_MAX_THREADS = 2
-    DOWNLOAD_MAX_THREADS = 4
+    LECTURE_MAX_THREADS = 1
+    DOWNLOAD_MAX_THREADS = 1
     urlRoot = "https://myetl.snu.ac.kr"
 
     targetLectures = []
