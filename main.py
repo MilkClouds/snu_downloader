@@ -147,7 +147,11 @@ if __name__ == "__main__":
 
     try:
         Downloader.args = args
-        Downloader.add_lecture(args.lectureId)
+        if args.lectureId.isnumeric():
+            Downloader.add_lecture(args.lectureId)
+        elif args.lectureId == 'all':
+            from courses import get_lectures
+            [Downloader.add_lecture(lecture) for lecture in get_lectures()]
         Downloader.download_all_lectures()
     except selenium.common.exceptions.WebDriverException:
         logging.info("[!] Download chromedriver https://chromedriver.chromium.org/downloads")
