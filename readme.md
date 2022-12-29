@@ -54,6 +54,7 @@ lectureId=123456
 username=(your_username)
 password=(your_password)
 ```
+The `lectureId` can be found using the URL of the lecture. e.g. (https://myetl.snu.ac.kr/courses/123456)
 
 Make sure `.env` file containing password not to be leaked.
 
