@@ -33,7 +33,7 @@ class Lecture:
 
             self.driver.find_element(By.CSS_SELECTOR, "input#login_id").send_keys(args.username)
             self.driver.find_element(By.CSS_SELECTOR, "input#login_pwd").send_keys(args.password)
-            self.driver.find_element(By.CSS_SELECTOR, 'input[value="로그인"]').click()
+            self.driver.find_element(By.CSS_SELECTOR, 'input[onclick="loginProc();"]').click()
 
             element = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#header > div.ic-app-header__main-navigation > div > a"))
@@ -173,7 +173,7 @@ if __name__ == "__main__":
             Downloader.add_lecture(args.lectureId)
         elif args.lectureId == 'all':
             from courses import get_lectures
-            Downloader.add_lectures(get_lectures())
+            Downloader.add_lectures(get_lectures(args.username, args.password))
         Downloader.download_all_lectures()
     except selenium.common.exceptions.WebDriverException:
         logging.info("[!] Download chromedriver https://chromedriver.chromium.org/downloads")
