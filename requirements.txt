@@ -4,3 +4,4 @@ bs4
 yt-dlp
 pytest
 seleniumbase
+plyer

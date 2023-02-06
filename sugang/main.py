@@ -28,7 +28,7 @@ async def _fetch(page: int, srchOpenSchyy: int, srchOpenShtm: str):
             assert res.status == 200
             txt = await res.text()
         soup = Soup(txt, 'html.parser')
-        logging.debug(soup)
+        # logging.debug(soup)
         for element in soup.select("a.course-info-detail"):
             element = element.select("ul > li:nth-child(1) > span:nth-child(3)")[0]
             r = re.match("(.*?)\((\d+)\)", element.text)
@@ -41,7 +41,7 @@ async def _fetch(page: int, srchOpenSchyy: int, srchOpenShtm: str):
             async with session.post("https://sugang.snu.ac.kr/sugang/cc/cc103ajax.action", data=data) as res:
                 r103 = await res.json(content_type=None)
             result[element.text] = dict(r101=r101, r103=r103)
-            logging.debug(element.text)
+            # logging.debug(element.text)
     logging.info(len(result))
     return result
 
