@@ -5,3 +5,4 @@ yt-dlp
 pytest
 seleniumbase
 plyer
+python-telegram-bot==13.15
