@@ -40,7 +40,7 @@ class RecorderTest(BaseCase):
                     abc = self.get_element(f'#course_info_detail_{num} > ul > li:nth-child(2) > span:nth-child(1) > em').get_attribute('innerText')
                     m = re.match(r"(\d+)/(\d+) \((\d+)\)", abc)
                     a, b, c = m[1], m[2], m[3]
-                    if a >= c:
+                    if a < b:
                         notify(
                             title = '수강신청 취소여석',
                             message = sbjtNm,
