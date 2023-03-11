@@ -30,6 +30,7 @@ class RecorderTest(BaseCase):
                 app_icon = None,
                 timeout = 10,
             )
+        P = []; Q = []; C = 0
         while 1:
             self.open("https://sugang.snu.ac.kr/sugang/cc/cc210.action")
             for element in self.find_elements('a.course-info-detail'):
@@ -39,12 +40,27 @@ class RecorderTest(BaseCase):
                 if sbjtNm in TARGET:
                     abc = self.get_element(f'#course_info_detail_{num} > ul > li:nth-child(2) > span:nth-child(1) > em').get_attribute('innerText')
                     m = re.match(r"(\d+)/(\d+) \((\d+)\)", abc)
-                    a, b, c = m[1], m[2], m[3]
+                    a, b, c = int(m[1]), int(m[2]), int(m[3])
                     if a < b:
-                        notify(
-                            title = '수강신청 취소여석',
-                            message = sbjtNm,
-                            app_icon = None,
-                            timeout = 10,
-                        )
-            time.sleep(5)
+                        Q.append(sbjtNm)
+                    if C == 0:
+                        notify(title='', message=f"{sbjtNm} {a}/{b}({c})")
+            for sbjtNm in TARGET:
+                if (sbjtNm in Q) and (sbjtNm not in P):
+                    notify(
+                        title = '취소여석+',
+                        message = sbjtNm,
+                        app_icon = None,
+                        timeout = 10,
+                    )
+                if (sbjtNm in P) and (sbjtNm not in Q):
+                    notify(
+                        title = '취소여석-',
+                        message = sbjtNm,
+                        app_icon = None,
+                        timeout = 10,
+                    )
+            P = Q.copy()
+            Q = []
+            C = 1
+            time.sleep(7)

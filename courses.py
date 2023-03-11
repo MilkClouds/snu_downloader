@@ -12,7 +12,13 @@ def get_lectures(username: str, password: str):
         sb.click('input[onclick="loginProc();"]')
         sb.open("https://myetl.snu.ac.kr/courses")
         trs = sb.find_elements("#my_courses_table > tbody > tr")
-        lectures = [tr.find_element(By.CSS_SELECTOR, 'a').get_attribute('href').split("/")[-1] for tr in trs]
+        lectures = []
+        for tr in trs:
+            try:
+                lectures.append(tr.find_element(By.CSS_SELECTOR, 'a').get_attribute('href').split("/")[-1])
+            except:
+                pass
+        # lectures = [tr.find_element(By.CSS_SELECTOR, 'a').get_attribute('href').split("/")[-1] for tr in trs]
         logging.info(f"Fetched lectures: {lectures}")
         return lectures
 

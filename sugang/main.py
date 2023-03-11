@@ -4,13 +4,13 @@ from tqdm.asyncio import tqdm
 
 logging.basicConfig(level=logging.DEBUG, format='%(message)s', filename="log.txt", encoding="utf-8")
 
-sem = asyncio.Semaphore(1)
-srchOpenSchyy = 2022
+sem = asyncio.Semaphore(6)
+srchOpenSchyy = 2023
 srchOpenShtms = dict(
         Spring= "U000200001U000300001",
-        Summer= "U000200001U000300002",
-        Fall  = "U000200002U000300001",
-        Winter= "U000200002U000300002"
+        # Summer= "U000200001U000300002",
+        # Fall  = "U000200002U000300001",
+        # Winter= "U000200002U000300002"
         )
 
 async def async_range(count):
@@ -90,12 +90,16 @@ if __name__ == "__main__":
             # =====================================================
             # 정말 절평이 꿀강일까? 궁금해서 찾아본 기록
             # 역시 교바교..
-            if j['r101']["LISTTAB01"]['mrksRelevalYn'] != "YES":
-                # if j['r101']['LISTTAB01']['departmentKorNm'] not in ('수리과학부', '컴퓨터공학부'):
-                if j['r101']['LISTTAB01']['departmentKorNm'] not in ('컴퓨터공학부',):
-                    continue
-                assert j['r101']["LISTTAB01"]['mrksRelevalYn'] == 'NO'
-                print(f'{srchOpenSchyy}_{sem}', i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
+            # if j['r101']["LISTTAB01"]['mrksRelevalYn'] != "YES":
+            #     # if j['r101']['LISTTAB01']['departmentKorNm'] not in ('수리과학부', '컴퓨터공학부'):
+            #     if j['r101']['LISTTAB01']['departmentKorNm'] not in ('컴퓨터공학부',):
+            #         continue
+            #     assert j['r101']["LISTTAB01"]['mrksRelevalYn'] == 'NO'
+            #     print(f'{srchOpenSchyy}_{sem}', i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
             # =====================================================
-            # if "하이브리드" in str(j) or "비대면" in str(j):
-            #     print(i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
+            if "하이브리드" in str(j) or "비대면" in str(j) or "온라인" in str(j):
+                if j['r101']['LISTTAB01']['departmentKorNm']  not in ('수리과학부', '컴퓨터공학부', '데이터사이언스학과'):
+                    continue
+                pos = max((str(j).find("하이브리드"), str(j).find("비대면"), str(j).find("온라인")))
+                print(i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
+                print(str(j)[pos - 30 : pos + 30])
