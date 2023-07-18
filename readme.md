@@ -15,8 +15,10 @@ Works on new eTL(Canvas)
 # Prerequisites
 
 ## Python3 packages
+
+install python and poetry first! (`pip install poetry`)
 ```
-pip install -r requirements.txt
+poetry install
 ```
 ## ChromeDriver
 * A Chromium-based browser is required. (e.g. Chrome, Edge)
@@ -34,6 +36,9 @@ Then, you should at least once execute it by `Right Click => CMD + Open` in orde
 
 # How to use
 ## Usage
+
+As long as I remember, `-p` option is NOT OPTIONAL (you should specify `-p`) if you don't use `.env` file.
+
 ```
 python3 main.py -h
 usage: main.py [-h] [-d DIR] -l LECTUREID -u USERNAME -p
