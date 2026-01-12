@@ -9,85 +9,118 @@
 하이브리드, 비대면, 온라인 키워드가 포함된 강좌를 검색합니다.
 
 Usage:
-    uv run 02_find_remote.py [--file PATH] [--dept DEPT1,DEPT2,...] [--all]
-    
+    uv run 02_find_remote.py [--file PATH] [--subject KEYWORDS] [--dept KEYWORDS] [--all]
+
 Examples:
     uv run 02_find_remote.py
     uv run 02_find_remote.py --file output_2025_Fall.json
-    uv run 02_find_remote.py --dept 컴퓨터공학부,수리과학부
-    uv run 02_find_remote.py --all  # 모든 학과 표시
+    uv run 02_find_remote.py --subject 물리,컴퓨터,프로그래밍
+    uv run 02_find_remote.py --dept 컴퓨터공학부,물리학과
+    uv run 02_find_remote.py --all  # 모든 원격 강좌 표시
 """
 
 import argparse
 import json
 from pathlib import Path
 
+# 원격 수업 키워드
+REMOTE_KEYWORDS = ["하이브리드", "비대면", "온라인"]
 
-# 검색할 키워드
-KEYWORDS = ["하이브리드", "비대면", "온라인"]
-
-# 기본 필터링 학과 목록
-DEFAULT_DEPARTMENTS = [
-    "수리과학부",
-    "컴퓨터공학부",
-    "데이터사이언스학과",
+# 기본 과목명 검색 키워드
+DEFAULT_SUBJECT_KEYWORDS = [
+    "물리",
+    "컴퓨터",
+    "Computer",
+    "Physics",
+    "프로그래밍",
+    "알고리즘",
+    "자료구조",
+    "운영체제",
+    "소프트웨어",
+    "코딩",
+    "데이터",
+    "인공지능",
+    "머신러닝",
+    "딥러닝",
+    "정보과학",
 ]
 
+# 기본 학과명 검색 키워드
+DEFAULT_DEPT_KEYWORDS = ["물리", "컴퓨터", "전기·정보", "데이터사이언스"]
 
-def find_remote_courses(data: dict, departments: list[str] | None = None) -> list[dict]:
-    """원격 수업 관련 강좌 검색"""
+
+def find_remote_courses(
+    data: dict,
+    subject_keywords: list[str] | None = None,
+    dept_keywords: list[str] | None = None,
+) -> list[dict]:
+    """원격 수업 관련 강좌 검색
+
+    Args:
+        data: 강좌 데이터
+        subject_keywords: 과목명 검색 키워드 (None이면 필터링 안함)
+        dept_keywords: 학과명 검색 키워드 (None이면 필터링 안함)
+
+    Returns:
+        검색된 강좌 목록
+    """
     results = []
-    
+
     for course_key, course_data in data.items():
-        r101 = course_data.get("r101")
-        if r101 is None:
-            continue
-        
-        # 전체 데이터를 문자열로 변환하여 키워드 검색
         course_str = str(course_data)
-        matched_keywords = [kw for kw in KEYWORDS if kw in course_str]
-        
-        if not matched_keywords:
+
+        # 원격 수업 키워드 확인
+        matched_remote = [kw for kw in REMOTE_KEYWORDS if kw in course_str]
+        if not matched_remote:
             continue
-        
-        # 강좌 기본 정보 추출
-        info = r101.get("LISTTAB01", {})
-        dept = info.get("departmentKorNm", "")
-        
-        # 학과 필터링 (departments가 None이면 모든 학과 표시)
-        if departments is not None and dept not in departments:
-            continue
-        
-        # 키워드 주변 컨텍스트 추출
-        context = ""
-        for kw in matched_keywords:
-            pos = course_str.find(kw)
-            if pos != -1:
-                context = course_str[max(0, pos - 30) : pos + 30]
-                break
-        
-        results.append({
-            "code": course_key,
-            "name": info.get("sbjtNm", ""),
-            "professor": info.get("profNm", ""),
-            "department": dept,
-            "keywords": matched_keywords,
-            "context": context,
-        })
-    
+
+        # 강좌 정보 추출
+        r101 = course_data.get("r101", {})
+        info = r101.get("LISTTAB01", {}) if r101 else {}
+        name = info.get("sbjtNm", "")
+        dept = info.get("departmentKorNm", "") or ""
+
+        # 필터링 (subject_keywords와 dept_keywords 둘 다 None이면 모든 원격 강좌 표시)
+        if subject_keywords is not None or dept_keywords is not None:
+            matched_subject = []
+            matched_dept = []
+
+            if subject_keywords:
+                matched_subject = [kw for kw in subject_keywords if kw.lower() in name.lower()]
+            if dept_keywords:
+                matched_dept = [kw for kw in dept_keywords if kw in dept]
+
+            if not matched_subject and not matched_dept:
+                continue
+
+            matched_keywords = matched_subject + matched_dept
+        else:
+            matched_keywords = []
+
+        results.append(
+            {
+                "code": course_key,
+                "name": name,
+                "professor": info.get("profNm", ""),
+                "department": dept,
+                "remote_keywords": matched_remote,
+                "matched_keywords": matched_keywords,
+            }
+        )
+
     return results
 
 
-def print_results(results: list[dict], verbose: bool = False):
+def print_results(results: list[dict]):
     """결과 출력"""
     if not results:
         print("검색 결과가 없습니다.")
         return
-    
-    print(f"\n{'='*80}")
+
+    print(f"\n{'=' * 80}")
     print(f"총 {len(results)}개 강좌 발견")
-    print(f"{'='*80}\n")
-    
+    print(f"{'=' * 80}\n")
+
     # 학과별로 그룹화
     by_dept: dict[str, list] = {}
     for r in results:
@@ -95,7 +128,7 @@ def print_results(results: list[dict], verbose: bool = False):
         if dept not in by_dept:
             by_dept[dept] = []
         by_dept[dept].append(r)
-    
+
     for dept, courses in sorted(by_dept.items()):
         print(f"\n[{dept}] - {len(courses)}개")
         print("-" * 60)
@@ -103,22 +136,37 @@ def print_results(results: list[dict], verbose: bool = False):
             print(f"  {c['code']}")
             print(f"    과목명: {c['name']}")
             print(f"    교수: {c['professor']}")
-            print(f"    키워드: {', '.join(c['keywords'])}")
-            if verbose:
-                print(f"    컨텍스트: ...{c['context']}...")
+            print(f"    원격: {', '.join(c['remote_keywords'])}")
+            if c["matched_keywords"]:
+                print(f"    매칭: {', '.join(c['matched_keywords'])}")
             print()
 
 
 def main():
     parser = argparse.ArgumentParser(description="하이브리드/비대면/온라인 강좌 검색")
-    parser.add_argument("--file", type=str, default="output_2026_Spring.json",
-                        help="검색할 JSON 파일 (기본값: output_2026_Spring.json)")
-    parser.add_argument("--dept", type=str, default=None,
-                        help="필터링할 학과 (콤마로 구분, 예: 컴퓨터공학부,수리과학부)")
-    parser.add_argument("--all", action="store_true",
-                        help="모든 학과 표시 (필터링 없음)")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="상세 출력 (컨텍스트 포함)")
+    parser.add_argument(
+        "--file",
+        type=str,
+        default="output_2026_Spring.json",
+        help="검색할 JSON 파일 (기본값: output_2026_Spring.json)",
+    )
+    parser.add_argument(
+        "--subject",
+        type=str,
+        default=None,
+        help="과목명 검색 키워드 (콤마로 구분, 예: 물리,컴퓨터,프로그래밍)",
+    )
+    parser.add_argument(
+        "--dept",
+        type=str,
+        default=None,
+        help="학과명 검색 키워드 (콤마로 구분, 예: 컴퓨터공학부,물리학과)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="모든 원격 강좌 표시 (필터링 없음)",
+    )
     args = parser.parse_args()
 
     # 파일 로드
@@ -133,21 +181,29 @@ def main():
         data = json.load(f)
     print(f"총 {len(data)}개 강좌 로드 완료")
 
-    # 학과 필터 설정
+    # 필터 설정
     if args.all:
-        departments = None
-    elif args.dept:
-        departments = [d.strip() for d in args.dept.split(",")]
+        subject_keywords = None
+        dept_keywords = None
+        print("모든 원격 강좌를 검색합니다.")
+    elif args.subject or args.dept:
+        subject_keywords = [k.strip() for k in args.subject.split(",")] if args.subject else None
+        dept_keywords = [k.strip() for k in args.dept.split(",")] if args.dept else None
+        if subject_keywords:
+            print(f"과목명 키워드: {', '.join(subject_keywords)}")
+        if dept_keywords:
+            print(f"학과명 키워드: {', '.join(dept_keywords)}")
     else:
-        departments = DEFAULT_DEPARTMENTS
-        print(f"기본 필터링 학과: {', '.join(departments)}")
-        print("(모든 학과를 보려면 --all 옵션 사용)")
+        subject_keywords = DEFAULT_SUBJECT_KEYWORDS
+        dept_keywords = DEFAULT_DEPT_KEYWORDS
+        print(f"기본 과목명 키워드: {', '.join(subject_keywords)}")
+        print(f"기본 학과명 키워드: {', '.join(dept_keywords)}")
+        print("(모든 원격 강좌를 보려면 --all 옵션 사용)")
 
     # 검색 실행
-    results = find_remote_courses(data, departments)
-    print_results(results, args.verbose)
+    results = find_remote_courses(data, subject_keywords, dept_keywords)
+    print_results(results)
 
 
 if __name__ == "__main__":
     main()
-
