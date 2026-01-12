@@ -1,22 +1,38 @@
-import sys, logging, re, json, asyncio, aiohttp
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "aiohttp>=3.13.3",
+#     "beautifulsoup4>=4.14.3",
+#     "tqdm>=4.67.1",
+# ]
+# ///
+import asyncio
+import json
+import logging
+import re
+import sys
+
+import aiohttp
 from bs4 import BeautifulSoup as Soup
 from tqdm.asyncio import tqdm
 
-logging.basicConfig(level=logging.DEBUG, format='%(message)s', filename="log.txt", encoding="utf-8")
+logging.basicConfig(level=logging.DEBUG, format="%(message)s", filename="log.txt", encoding="utf-8")
 
 sem = asyncio.Semaphore(6)
-srchOpenSchyy = 2023
+srchOpenSchyy = 2026
 srchOpenShtms = dict(
-        Spring= "U000200001U000300001",
-        # Summer= "U000200001U000300002",
-        # Fall  = "U000200002U000300001",
-        # Winter= "U000200002U000300002"
-        )
+    Spring="U000200001U000300001",
+    # Summer= "U000200001U000300002",
+    # Fall  = "U000200002U000300001",
+    # Winter= "U000200002U000300002"
+)
+
 
 async def async_range(count):
     for i in range(count):
-        yield(i)
+        yield (i)
         await asyncio.sleep(0.0)
+
 
 async def _fetch(page: int, srchOpenSchyy: int, srchOpenShtm: str):
     result = {}
@@ -27,7 +43,7 @@ async def _fetch(page: int, srchOpenSchyy: int, srchOpenShtm: str):
         async with session.post(url, data=data) as res:
             assert res.status == 200
             txt = await res.text()
-        soup = Soup(txt, 'html.parser')
+        soup = Soup(txt, "html.parser")
         # logging.debug(soup)
         for element in soup.select("a.course-info-detail"):
             element = element.select("ul > li:nth-child(1) > span:nth-child(3)")[0]
@@ -45,9 +61,11 @@ async def _fetch(page: int, srchOpenSchyy: int, srchOpenShtm: str):
     logging.info(len(result))
     return result
 
+
 async def safe_fetch(*args, **kwargs):
     async with sem:
         return await _fetch(*args, **kwargs)
+
 
 async def fetch(srchOpenSchyy: int, srchOpenShtm: str):
     result = {}
@@ -66,25 +84,27 @@ async def fetch(srchOpenSchyy: int, srchOpenShtm: str):
     #     result.update(res)
     return result
 
+
 async def main():
     for sem, srchOpenShtm in srchOpenShtms.items():
         result = await fetch(srchOpenSchyy, srchOpenShtm)
         print(f"Fetched : {len(result)}")
-        with open(f"output_{srchOpenSchyy}_{sem}.json", "w", encoding = 'utf-8') as file:
+        with open(f"output_{srchOpenSchyy}_{sem}.json", "w", encoding="utf-8") as file:
             json.dump(result, file, ensure_ascii=False)
+
 
 if __name__ == "__main__":
     py_ver = int(f"{sys.version_info.major}{sys.version_info.minor}")
-    if py_ver > 37 and sys.platform.startswith('win'):
+    if py_ver > 37 and sys.platform.startswith("win"):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    # asyncio.run(main())
+    asyncio.run(main())
 
     # ===================================
     for sem, srchOpenShtm in srchOpenShtms.items():
-        with open(f"output_{srchOpenSchyy}_{sem}.json", "r", encoding = 'utf-8') as file:
+        with open(f"output_{srchOpenSchyy}_{sem}.json", "r", encoding="utf-8") as file:
             result = json.load(file)
         for i, j in result.items():
-            if j['r101'] is None: # 2022_Fall, 457.629A(001)
+            if j["r101"] is None:  # 2022_Fall, 457.629A(001)
                 print(i)
                 continue
             # =====================================================
@@ -98,8 +118,18 @@ if __name__ == "__main__":
             #     print(f'{srchOpenSchyy}_{sem}', i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
             # =====================================================
             if "하이브리드" in str(j) or "비대면" in str(j) or "온라인" in str(j):
-                if j['r101']['LISTTAB01']['departmentKorNm']  not in ('수리과학부', '컴퓨터공학부', '데이터사이언스학과'):
+                if j["r101"]["LISTTAB01"]["departmentKorNm"] not in (
+                    "수리과학부",
+                    "컴퓨터공학부",
+                    "데이터사이언스학과",
+                ):
                     continue
                 pos = max((str(j).find("하이브리드"), str(j).find("비대면"), str(j).find("온라인")))
-                print(i, j['r101']['LISTTAB01']['sbjtNm'], j['r101']['LISTTAB01']['profNm'], j['r101']['LISTTAB01']['departmentKorNm'], sep=' / ')
+                print(
+                    i,
+                    j["r101"]["LISTTAB01"]["sbjtNm"],
+                    j["r101"]["LISTTAB01"]["profNm"],
+                    j["r101"]["LISTTAB01"]["departmentKorNm"],
+                    sep=" / ",
+                )
                 print(str(j)[pos - 30 : pos + 30])
