@@ -1,7 +1,11 @@
-from seleniumbase import SB
+import logging
+
+import dotenv
 from selenium.webdriver.common.by import By
-import dotenv, os, logging
-dotenv.load_dotenv(override = True)
+from seleniumbase import SB
+
+dotenv.load_dotenv(override=True)
+
 
 def get_lectures(username: str, password: str):
     logging.info("Fetching lecture list...")
@@ -15,12 +19,13 @@ def get_lectures(username: str, password: str):
         lectures = []
         for tr in trs:
             try:
-                lectures.append(tr.find_element(By.CSS_SELECTOR, 'a').get_attribute('href').split("/")[-1])
-            except:
+                lectures.append(tr.find_element(By.CSS_SELECTOR, "a").get_attribute("href").split("/")[-1])
+            except Exception:
                 pass
         # lectures = [tr.find_element(By.CSS_SELECTOR, 'a').get_attribute('href').split("/")[-1] for tr in trs]
         logging.info(f"Fetched lectures: {lectures}")
         return lectures
+
 
 if __name__ == "__main__":
     print(get_lectures())
