@@ -16,9 +16,9 @@ Works on new eTL(Canvas)
 
 ## Python3 packages
 
-install python and poetry first! (`pip install poetry`)
+install python and uv first! (`pip install uv`)
 ```
-poetry install
+uv sync
 ```
 ## ChromeDriver
 * A Chromium-based browser is required. (e.g. Chrome, Edge)
