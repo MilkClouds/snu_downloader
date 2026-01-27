@@ -1,8 +1,0 @@
-selenium
-seleniumbase
-python-dotenv
-bs4
-yt-dlp
-pytest
-plyer
-python-telegram-bot==13.15

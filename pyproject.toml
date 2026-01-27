@@ -6,15 +6,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "MilkClouds", email = "milkclouds@snu.ac.kr" }]
 dependencies = [
-  "selenium>=4.10.0",
-  "python-dotenv>=1.0.0",
-  "bs4>=0.0.1",
-  "yt-dlp>=2023.7.6",
-  "ptest>=2.0.3",
-  "seleniumbase>=4.15.15",
-  "plyer>=2.1.0",
+  "selenium",
+  "python-dotenv",
+  "bs4",
+  "yt-dlp",
+  "ptest",
+  "seleniumbase",
+  "plyer",
   "python-telegram-bot==13.15",
-  "tqdm>=4.65.0",
+  "tqdm",
 ]
 
 [build-system]
