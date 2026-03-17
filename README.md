@@ -1,74 +1,62 @@
 # SNU eTL Batch Downloader
-Downloads all videos from the lecture.
+Downloads all lecture materials from SNU eTL (Canvas).
 
-Works on new eTL(Canvas)
-
-- Support downloading lecture video(including snu-cms, youtube-embedded lectures)
-- Support downloading lecture materials(files)(ppt, pdf, ...)
-- Support multithreading on lecture scraping & downloading (**I strongly recommend you to use only one thread**)
-
-
-# TODO
-- [ ] Fancy CLI interface
+- Support downloading lecture video (including snu-cms, youtube-embedded lectures)
+- Support downloading lecture materials (files) (ppt, pdf, ...)
+- Support semester filtering (e.g. download only 2026-1 courses)
 
 
 # Prerequisites
 
-## Python3 packages
-
-install python and uv first! (`pip install uv`)
+## Python 3.11+ and uv
 ```
+pip install uv
 uv sync
 ```
-## ChromeDriver
-* A Chromium-based browser is required. (e.g. Chrome, Edge)
-* ChromeDriver should be executable using the default shell
-You can get ChromeDriver [here](https://chromedriver.chromium.org/home).
 
-Caution: version mismatch may lead to malfunction.  
+## Chrome
+A Chromium-based browser (e.g. Chrome, Edge) is required.
+ChromeDriver is managed automatically by Selenium.
 
-You can get chromium by `choco install chromium` on Windows, when you use chocolatey.
-
-### For macOS
-After you unarchive the ChromeDriver, move the executable to `/usr/local/bin`.
-
-Then, you should at least once execute it by `Right Click => CMD + Open` in order to use ChromeDriver.
 
 # How to use
+
+## Login
+Login is done via the SNU SSO page in a browser window.
+When the program starts, a Chrome window will open — log in with your SNU account (including MFA) and the program will proceed automatically.
+
 ## Usage
-
-As long as I remember, `-p` option is NOT OPTIONAL (you should specify `-p`) if you don't use `.env` file.
-
 ```
-python3 main.py -h
-usage: main.py [-h] [-d DIR] -l LECTUREID -u USERNAME -p
+uv run python main.py -h
+usage: main.py [-h] [-d DIR] -l LECTUREID [-s SEMESTER]
 
 SNU eTL Batch Downloader
 
 options:
   -h, --help    show this help message and exit
   -d DIR        Directory to save files
-  -l LECTUREID  Lecture ID
-  -u USERNAME   SNU username
-  -p            SNU password
+  -l LECTUREID  Lecture ID or 'all'
+  -s SEMESTER   Semester filter (e.g. '2026-1')
 ```
 
-Or you can define `.env` file as below (For further exaplanation, refer to [python-dotenv](https://github.com/theskumar/python-dotenv), You should add a `.env` file in the same directory of `main.py`)
-```
-lectureId=123456
-username=(your_username)
-password=(your_password)
-```
 The `lectureId` can be found using the URL of the lecture. e.g. (https://myetl.snu.ac.kr/courses/123456)
 
-Make sure `.env` file containing password not to be leaked.
+## Examples
+Download a specific lecture:
+```
+uv run python main.py -l 123456
+```
 
-## Example
+Download all lectures from a specific semester:
 ```
-python3 main.py  -l 123456 -u mysnuid -p
+uv run python main.py -l all -s "2026-1"
 ```
-* Although you cannot see your password, the password is being entered.
-* Your username and password is not stored nor uploaded elsewhere. They are only used for eTL authentication and are immediately destroyed when the program ends.
+
+Download all lectures:
+```
+uv run python main.py -l all
+```
+
 
 # Disclaimer
 ```
@@ -94,4 +82,3 @@ By using this program, you agree to the above terms.
 
 # Credit
 - [junukwon7](https://github.com/junukwon7)
-
