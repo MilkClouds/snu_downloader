@@ -1,7 +1,3 @@
-chromedriver.exe
-.env
-__pycache__
-log.txt
-
-*/
-!sugang
+__pycache__/
+*.pyc
+downloads/

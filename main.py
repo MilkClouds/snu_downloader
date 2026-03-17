@@ -1,20 +1,109 @@
 import argparse
+import functools
 import logging
+import pathlib
 import re
+import shutil
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List
 
+import requests
 import selenium
 import yt_dlp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from seleniumbase import SB
+from tqdm.auto import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
-from misc import download, yes_or_no
+
+# --- Utilities ---
+
+
+def yes_or_no(question):
+    while "the answer is invalid":
+        reply = str(input(question + " (y/n): ")).lower().strip()
+        if len(reply) > 0:
+            if reply[0] == "y":
+                return True
+            if reply[0] == "n":
+                return False
+
+
+# modified https://stackoverflow.com/a/63831344
+def download(url, filename, *args, **kwargs):
+    r = requests.get(url, stream=True, allow_redirects=True, *args, **kwargs)
+    if r.status_code != 200:
+        r.raise_for_status()  # Will only raise for 4xx codes, so...
+        raise RuntimeError(f"Request to {url} returned status code {r.status_code}")
+    file_size = int(r.headers.get("Content-Length", 0))
+
+    path = pathlib.Path(filename).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    desc = "(Unknown total file size)" if file_size == 0 else ""
+    r.raw.read = functools.partial(r.raw.read, decode_content=True)  # Decompress if needed
+    with logging_redirect_tqdm():
+        with tqdm.wrapattr(r.raw, "read", total=file_size, desc=desc) as r_raw:
+            with path.open("wb") as f:
+                shutil.copyfileobj(r_raw, f)
+
+    return path
+
+
+# --- Course fetching ---
+
+
+def wait_for_etl_login(sb, timeout=120):
+    """Open eTL and wait for the user to complete SSO login (including MFA)."""
+    sb.open("https://myetl.snu.ac.kr")
+    logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
+    for _ in range(timeout):
+        sb.sleep(1)
+        try:
+            # Dismiss any unexpected alerts
+            alert = sb.driver.switch_to.alert
+            alert.accept()
+            continue
+        except Exception:
+            pass
+        try:
+            url = sb.get_current_url()
+            if "myetl.snu.ac.kr" in url and "nsso" not in url:
+                logging.info("로그인 성공!")
+                return
+        except Exception:
+            pass
+    raise TimeoutError("로그인 시간 초과 (2분)")
+
+
+def get_lectures(semester: str = None):
+    logging.info("Fetching lecture list...")
+    with SB(headless=False) as sb:
+        wait_for_etl_login(sb)
+        sb.open("https://myetl.snu.ac.kr/courses")
+        sb.sleep(3)
+        trs = sb.find_elements("#my_courses_table > tbody > tr")
+        lectures = []
+        for tr in trs:
+            try:
+                row_text = tr.text
+                if semester and semester not in row_text:
+                    continue
+                lectures.append(tr.find_element(By.CSS_SELECTOR, "a").get_attribute("href").split("/")[-1])
+            except Exception:
+                pass
+        cookies = sb.driver.get_cookies()
+        logging.info(f"Fetched lectures (semester={semester}): {lectures}")
+        return lectures, cookies
+
+
+# --- Lecture & Downloader ---
 
 
 class Lecture:
@@ -174,31 +263,31 @@ class Downloader:
         cls.downloadExecutor.shutdown(wait=True)
 
 
+# --- Main ---
+
+DISCLAIMER = """\
+==============================================================================================================================
+DISCLAIMER: This program is not affiliated with SNU. Use at your own risk.
+==============================================================================================================================
+The information provided by SNU eTL Batch Downloader ("we," "us," or "our") on our application is for general
+informational purposes only. All information on our application is provided in good faith, however we make no
+representation or warranty of any kind, express or implied, regarding the accuracy, adequacy, validity, reliability,
+availability, or completeness of any information on our application. UNDER NO CIRCUMSTANCE SHALL WE HAVE ANY LIABILITY
+TO YOU FOR ANY LOSS OR DAMAGE OF ANY KIND INCURRED AS A RESULT OF THE USE OF OUR APPLICATION OR RELIANCE ON ANY
+INFORMATION PROVIDED ON OUR APPLICATION. YOUR USE OF OUR APPLICATION AND YOUR RELIANCE ON ANY INFORMATION ON OUR
+APPLICATION IS SOLELY AT YOUR OWN RISK.
+==============================================================================================================================
+본 프로그램에 의해 제공된 모든 정보는 일반적인 목적으로만 사용할 수 있습니다. 이 프로그램의/으로 만들어진 모든 정보는 공익을
+위한 것이나, 개발자는 프로그램의 안정성, 적법성, 정확성, 정밀성, 의존성, 가용성, 완전성에 대하여 그 어떤 보증을 보장하지도,
+함의하지도 않습니다. 이러한 조건 하에 개발자는 이 프로그램의 사용이나 생성된 정보로 인한 그 어떤 피해나 행위에 관해서도 책임을
+지지 않습니다. 이 프로그램을 사용하는 것은 상기 내용에 동의하였으며, 프로그램의 사용으로 인한 책임은 전부 사용자에게 있습니다.
+==============================================================================================================================
+By using this program, you agree to the above terms.
+=============================================================================================================================="""
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info(
-        "=============================================================================================================================="
-    )
-    logging.info("DISCLAIMER: This program is not affiliated with SNU. Use at your own risk.")
-    logging.info(
-        "=============================================================================================================================="
-    )
-    logging.info(
-        'The information provided by SNU eTL Batch Downloader ("we," "us," or "our") on our application is for general\ninformational purposes only. All information on our application is provided in good faith, however we make no\nrepresentation or warranty of any kind, express or implied, regarding the accuracy, adequacy, validity, reliability,\navailability, or completeness of any information on our application. UNDER NO CIRCUMSTANCE SHALL WE HAVE ANY LIABILITY\nTO YOU FOR ANY LOSS OR DAMAGE OF ANY KIND INCURRED AS A RESULT OF THE USE OF OUR APPLICATION OR RELIANCE ON ANY\nINFORMATION PROVIDED ON OUR APPLICATION. YOUR USE OF OUR APPLICATION AND YOUR RELIANCE ON ANY INFORMATION ON OUR\nAPPLICATION IS SOLELY AT YOUR OWN RISK.'
-    )
-    logging.info(
-        "=============================================================================================================================="
-    )
-    logging.info(
-        "본 프로그램에 의해 제공된 모든 정보는 일반적인 목적으로만 사용할 수 있습니다. 이 프로그램의/으로 만들어진 모든 정보는 공익을\n위한 것이나, 개발자는 프로그램의 안정성, 적법성, 정확성, 정밀성, 의존성, 가용성, 완전성에 대하여 그 어떤 보증을 보장하지도,\n함의하지도 않습니다. 이러한 조건 하에 개발자는 이 프로그램의 사용이나 생성된 정보로 인한 그 어떤 피해나 행위에 관해서도 책임을\n지지 않습니다. 이 프로그램을 사용하는 것은 상기 내용에 동의하였으며, 프로그램의 사용으로 인한 책임은 전부 사용자에게 있습니다."
-    )
-    logging.info(
-        "=============================================================================================================================="
-    )
-    logging.info("By using this program, you agree to the above terms.\nThis disclaimer can be found at RETRACTED")
-    logging.info(
-        "=============================================================================================================================="
-    )
+    logging.info(DISCLAIMER)
 
     if not yes_or_no("Do you agree with the terms above?"):
         exit()
@@ -214,8 +303,6 @@ if __name__ == "__main__":
         if args.lectureId.isnumeric():
             Downloader.add_lecture(args.lectureId)
         elif args.lectureId == "all":
-            from courses import get_lectures
-
             lecture_ids, cookies = get_lectures(semester=args.semester)
             Lecture.cookies = cookies
             Downloader.add_lectures(lecture_ids)
