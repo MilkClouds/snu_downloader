@@ -7,7 +7,6 @@ requires-python = ">=3.11"
 authors = [{ name = "MilkClouds", email = "milkclouds@snu.ac.kr" }]
 dependencies = [
   "selenium",
-  "yt-dlp",
   "requests",
   "tqdm",
 ]

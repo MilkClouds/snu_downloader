@@ -1,80 +1,95 @@
 import argparse
 import functools
+import json
 import logging
 import pathlib
 import re
 import shutil
-import traceback
-from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
-from types import SimpleNamespace
-from typing import List
 
 import requests
-import selenium
-import yt_dlp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
+
+ETL_ROOT = "https://myetl.snu.ac.kr"
+API_ROOT = f"{ETL_ROOT}/api/v1"
+COOKIE_FILE = Path(__file__).parent / ".cookies.json"
 
 
 # --- Utilities ---
 
 
 def yes_or_no(question):
-    while "the answer is invalid":
-        reply = str(input(question + " (y/n): ")).lower().strip()
-        if len(reply) > 0:
-            if reply[0] == "y":
-                return True
-            if reply[0] == "n":
-                return False
+    while True:
+        reply = input(question + " (y/n): ").lower().strip()
+        if reply.startswith("y"):
+            return True
+        if reply.startswith("n"):
+            return False
 
 
-# modified https://stackoverflow.com/a/63831344
-def download(url, filename, *args, **kwargs):
-    r = requests.get(url, stream=True, allow_redirects=True, *args, **kwargs)
+def sanitize(name: str) -> str:
+    return re.sub(r'[\\/:"*?<>|]+', "", name)
+
+
+def download_file(url, filepath, cookies=None):
+    """Download a file with progress bar. Skips if already exists."""
+    if filepath.exists():
+        logging.info(f"  [skip] {filepath.name}")
+        return
+    logging.info(f"  [download] {filepath.name}")
+    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies)
     if r.status_code != 200:
-        r.raise_for_status()  # Will only raise for 4xx codes, so...
-        raise RuntimeError(f"Request to {url} returned status code {r.status_code}")
+        logging.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
+        return
     file_size = int(r.headers.get("Content-Length", 0))
-
-    path = pathlib.Path(filename).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    desc = "(Unknown total file size)" if file_size == 0 else ""
-    r.raw.read = functools.partial(r.raw.read, decode_content=True)  # Decompress if needed
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    r.raw.read = functools.partial(r.raw.read, decode_content=True)
     with logging_redirect_tqdm():
-        with tqdm.wrapattr(r.raw, "read", total=file_size, desc=desc) as r_raw:
-            with path.open("wb") as f:
+        with tqdm.wrapattr(r.raw, "read", total=file_size, desc="") as r_raw:
+            with filepath.open("wb") as f:
                 shutil.copyfileobj(r_raw, f)
 
-    return path
+
+# --- SSO Login ---
 
 
-# --- Course fetching ---
+def _save_cookies(cookies):
+    COOKIE_FILE.write_text(json.dumps(cookies), encoding="utf-8")
 
 
-def _create_driver(headless=True):
+def _load_cookies():
+    if COOKIE_FILE.exists():
+        try:
+            cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
+            # Test if cookies are still valid
+            r = requests.get(f"{API_ROOT}/users/self", cookies=cookies)
+            if r.status_code == 200:
+                logging.info("저장된 쿠키로 로그인 성공!")
+                return cookies
+        except Exception:
+            pass
+    return None
+
+
+def sso_login():
+    """Return session cookies, reusing saved ones if valid."""
+    cookies = _load_cookies()
+    if cookies:
+        return cookies
+
     options = webdriver.ChromeOptions()
-    if headless:
-        options.add_argument("--headless")
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
     driver = webdriver.Chrome(options=options)
     driver.implicitly_wait(5)
-    return driver
 
-
-def _wait_for_etl_login(driver, timeout=120):
-    """Wait for the user to complete SSO login (including MFA)."""
-    import time
-
-    driver.get("https://myetl.snu.ac.kr")
+    driver.get(ETL_ROOT)
     logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
-    for _ in range(timeout):
+
+    for _ in range(120):
         time.sleep(1)
         try:
             alert = driver.switch_to.alert
@@ -86,173 +101,126 @@ def _wait_for_etl_login(driver, timeout=120):
             url = driver.current_url
             if "myetl.snu.ac.kr" in url and "nsso" not in url:
                 logging.info("로그인 성공!")
-                return
+                cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
+                driver.quit()
+                _save_cookies(cookies)
+                return cookies
         except Exception:
             pass
+
+    driver.quit()
     raise TimeoutError("로그인 시간 초과 (2분)")
 
 
-def get_lectures(semester: str = None):
-    logging.info("Fetching lecture list...")
-    driver = _create_driver(headless=False)
+# --- Canvas API ---
+
+
+def api_get_all(endpoint, cookies, params=None):
+    """Fetch all pages from a Canvas API endpoint."""
+    import json
+
+    if params is None:
+        params = {}
+    params["per_page"] = 100
+    url = f"{API_ROOT}{endpoint}"
+    results = []
+    while url:
+        r = requests.get(url, cookies=cookies, params=params)
+        r.raise_for_status()
+        # Canvas prepends "while(1);" to JSON responses as CSRF protection
+        text = r.text.removeprefix("while(1);")
+        results.extend(json.loads(text))
+        # Follow pagination via Link header
+        url = None
+        params = None  # params already encoded in Link URLs
+        link = r.headers.get("Link", "")
+        for part in link.split(","):
+            if 'rel="next"' in part:
+                url = part.split("<")[1].split(">")[0]
+    return results
+
+
+def get_courses(cookies, semester=None):
+    """Fetch enrolled courses, optionally filtered by semester."""
+    courses = api_get_all("/courses", cookies, {"enrollment_state": "active"})
+    if semester:
+        courses = [c for c in courses if semester in c.get("name", "")]
+    return courses
+
+
+def get_files(cookies, course_id):
+    """Fetch all files in a course."""
+    return api_get_all(f"/courses/{course_id}/files", cookies)
+
+
+def get_folders(cookies, course_id):
+    """Fetch all folders in a course."""
+    return api_get_all(f"/courses/{course_id}/folders", cookies)
+
+
+def get_assignments(cookies, course_id):
+    """Fetch all assignments in a course."""
+    return api_get_all(f"/courses/{course_id}/assignments", cookies)
+
+
+def get_modules(cookies, course_id):
+    """Fetch all modules with items."""
+    return api_get_all(f"/courses/{course_id}/modules", cookies, {"include[]": "items"})
+
+
+# --- Download logic ---
+
+
+def download_course(cookies, course, output_dir: Path):
+    """Download all files and show assignments for a course."""
+    course_id = course["id"]
+    course_name = sanitize(course.get("name", str(course_id)))
+    course_dir = output_dir / course_name
+    course_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info(f"\n{'='*60}")
+    logging.info(f"📁 {course_name}")
+    logging.info(f"{'='*60}")
+
+    # --- Files ---
     try:
-        _wait_for_etl_login(driver)
-        driver.get("https://myetl.snu.ac.kr/courses")
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "#my_courses_table"))
-        )
-        trs = driver.find_elements(By.CSS_SELECTOR, "#my_courses_table > tbody > tr")
-        lectures = []
-        for tr in trs:
-            try:
-                row_text = tr.text
-                if semester and semester not in row_text:
-                    continue
-                lectures.append(tr.find_element(By.CSS_SELECTOR, "a").get_attribute("href").split("/")[-1])
-            except Exception:
-                pass
-        cookies = driver.get_cookies()
-        logging.info(f"Fetched lectures (semester={semester}): {lectures}")
-        return lectures, cookies
-    finally:
-        driver.quit()
+        folders = {f["id"]: f.get("full_name", "") for f in get_folders(cookies, course_id)}
+        files = get_files(cookies, course_id)
+        logging.info(f"\n  파일 ({len(files)}개)")
 
+        for f in files:
+            folder_path = folders.get(f.get("folder_id"), "")
+            # Strip "course files/" prefix from folder path
+            folder_path = re.sub(r"^course files/?", "", folder_path)
+            file_dir = course_dir / "files" / folder_path if folder_path else course_dir / "files"
+            filepath = file_dir / sanitize(f["display_name"])
+            download_file(f["url"], filepath, cookies=cookies)
+    except Exception as e:
+        logging.warning(f"  파일 목록 조회 실패: {e}")
 
-# --- Lecture & Downloader ---
+    # --- Assignments ---
+    try:
+        assignments = get_assignments(cookies, course_id)
+        if assignments:
+            logging.info(f"\n  과제 ({len(assignments)}개)")
+            assignment_dir = course_dir / "assignments"
+            assignment_dir.mkdir(parents=True, exist_ok=True)
 
+            for a in assignments:
+                name = a.get("name", "Untitled")
+                due = a.get("due_at", "기한 없음")
+                points = a.get("points_possible", "?")
+                sub_types = ", ".join(a.get("submission_types", []))
+                logging.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
 
-class Lecture:
-    urlRoot: str = "https://myetl.snu.ac.kr"
-    cookies: List[dict] = None
-
-    def __init__(self, lectureId: str, args):
-        self.lectureId = lectureId
-        self.lectureName = None
-        self.lectureFiles = []
-
-        if Lecture.cookies is None:
-            # No cookies yet - open visible browser for user to login manually
-            driver = _create_driver(headless=False)
-            _wait_for_etl_login(driver)
-            Lecture.cookies = driver.get_cookies()
-            driver.quit()
-
-        self.driver = _create_driver(headless=True)
-        # '/123': to bypass domain settings in cookie
-        self.driver.get(Lecture.urlRoot + "/123")
-        for cookie in Lecture.cookies:
-            self.driver.add_cookie(cookie)
-
-        self.hrefs = []
-        try:
-            self.driver.get(Lecture.urlRoot + f"/courses/{self.lectureId}/modules")
-            self.lectureName = re.sub(
-                r'[\\/:"*?<>|]+',
-                "",
-                self.driver.find_element(
-                    By.CSS_SELECTOR, "#breadcrumbs > ul > li:nth-child(2) > a > span"
-                ).get_attribute("innerText"),
-            )
-            self.downloadPath = args.outputDir / self.lectureName
-
-            Path(self.downloadPath).mkdir(parents=True, exist_ok=True)
-
-            self.hrefs = [
-                element.get_attribute("href")
-                for element in self.driver.find_elements(By.CSS_SELECTOR, "div.module-item-title > span > a")
-            ]
-            logging.info("Lecture [ {} ] added".format(self.lectureName))
-
-        except Exception:
-            traceback.print_exc()
-            logging.info(f"Failed to get lecture [ {self.lectureId} ]")
-
-    def download_page(self, href: str):
-        if not href[-1].isnumeric():
-            return
-        self.driver.get(href)
-        self.driver.implicitly_wait(1)
-        cookies = {cookie["name"]: cookie["value"] for cookie in self.driver.get_cookies()}
-
-        try:
-            element = self.driver.find_element(By.CSS_SELECTOR, "#content > div:nth-child(2) > span > a")
-            if element.get_attribute("download"):
-                # file download
-                Downloader.downloadExecutor.submit(
-                    self.file_download, element.get_attribute("href"), element.get_attribute("innerText")[9:], cookies
-                )
-        except Exception:
-            pass
-
-        try:
-            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-            self.driver.switch_to.frame(iframes[1])
-            self.driver.switch_to.frame(self.driver.find_element(By.TAG_NAME, "iframe"))
-            src = self.driver.page_source
-            if "onYouTubeIframeAPIReady" in src:
-                id = re.search("videoId: '(.+?)'", src)[1]
-                Downloader.downloadExecutor.submit(self.yt_download, id)
-                return
-            contentId = self.driver.find_element(By.NAME, "thumbnail").get_attribute("content").split("/")[-1]
-            contentUrl = f"https://snu-cms-object.cdn.ntruss.com/contents/snu0000001/{contentId}/contents/media_files/screen.mp4"
-            Downloader.downloadExecutor.submit(self.file_download, contentUrl, f"{self.driver.title}.mp4", cookies)
-        except Exception:
-            pass
-
-    def download_all(self):
-        if len(self.hrefs) == 0:
-            return
-        logging.info("Downloading all files in lecture [ {} ]".format(self.lectureName))
-        [self.download_page(href) for href in self.hrefs]
-
-    def file_download(self, contentUrl: str, fileName: str, cookies: dict):
-        file = self.downloadPath / re.sub(r'[\\/:"*?<>|]+', "", fileName)
-        if file.exists():
-            logging.info(f"Skipping [ {file} ] since it already exists")
-            return
-        logging.info(f"Downloading [ {file.name} ]")
-        download(contentUrl, file, headers={"Referer": "https://lcms.snu.ac.kr"}, cookies=cookies)
-
-    def yt_download(self, id: int):
-        # resize concurrent-fragments if necessary
-        ydl_opts = {"concurrent-fragments": 4, "paths": str(self.downloadPath)}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download(id)
-
-
-class Downloader:
-    LECTURE_MAX_THREADS = 1
-    DOWNLOAD_MAX_THREADS = 1
-
-    targetLectures = []
-    downloadExecutor = ThreadPoolExecutor(max_workers=DOWNLOAD_MAX_THREADS)
-    lectureExecutor = ThreadPoolExecutor(max_workers=LECTURE_MAX_THREADS)
-
-    args = SimpleNamespace(**{})
-
-    @classmethod
-    def add_lecture(cls, lectureId) -> bool:
-        lecture = Lecture(lectureId, cls.args)
-        cls.targetLectures.append(lecture)
-        return lecture
-
-    @classmethod
-    def add_lectures(cls, lectureIds):
-        if len(lectureIds) == 0:
-            return
-        # evaluate 0th first to get cookie
-        cls.lectureExecutor.submit(cls.add_lecture, lectureIds[0]).result()
-        [*cls.lectureExecutor.map(cls.add_lecture, lectureIds[1:])]
-
-    @classmethod
-    def download_all_lectures(cls):
-        logging.info("Downloading all lectures")
-
-        for lecture in cls.targetLectures:
-            cls.lectureExecutor.submit(lecture.download_all)
-
-        cls.lectureExecutor.shutdown(wait=True)
-        cls.downloadExecutor.shutdown(wait=True)
+                # Save assignment description as HTML
+                desc = a.get("description")
+                if desc:
+                    desc_file = assignment_dir / f"{sanitize(name)}.html"
+                    if not desc_file.exists():
+                        desc_file.write_text(desc, encoding="utf-8")
+    except Exception as e:
+        logging.warning(f"  과제 목록 조회 실패: {e}")
 
 
 # --- Main ---
@@ -286,19 +254,22 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="SNU eTL Batch Downloader")
     parser.add_argument("-d", dest="outputDir", default=".", type=Path, help="Directory to save files")
-    parser.add_argument("-l", dest="lectureId", type=str, required=True, help="Lecture ID or 'all'")
+    parser.add_argument("-l", dest="lectureId", type=str, default="all", help="Lecture ID or 'all'")
     parser.add_argument("-s", dest="semester", type=str, default=None, help="Semester filter (e.g. '2026-1')")
     args = parser.parse_args()
 
-    try:
-        Downloader.args = args
-        if args.lectureId.isnumeric():
-            Downloader.add_lecture(args.lectureId)
-        elif args.lectureId == "all":
-            lecture_ids, cookies = get_lectures(semester=args.semester)
-            Lecture.cookies = cookies
-            Downloader.add_lectures(lecture_ids)
-        Downloader.download_all_lectures()
-    except selenium.common.exceptions.WebDriverException:
-        logging.info("[!] Download chromedriver https://chromedriver.chromium.org/downloads")
-        traceback.print_exc()
+    cookies = sso_login()
+
+    if args.lectureId == "all":
+        courses = get_courses(cookies, semester=args.semester)
+    else:
+        # Single course - fetch its info
+        r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
+        r.raise_for_status()
+        courses = [r.json()]
+
+    logging.info(f"\n{len(courses)}개 강의 발견")
+    for course in courses:
+        download_course(cookies, course, args.outputDir)
+
+    logging.info(f"\n완료!")
