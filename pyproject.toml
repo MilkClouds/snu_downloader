@@ -9,6 +9,7 @@ dependencies = [
   "selenium",
   "requests",
   "tqdm",
+  "yt-dlp",
 ]
 
 [build-system]

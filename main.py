@@ -9,8 +9,11 @@ import time
 from pathlib import Path
 
 import requests
+import yt_dlp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -35,13 +38,13 @@ def sanitize(name: str) -> str:
     return re.sub(r'[\\/:"*?<>|]+', "", name)
 
 
-def download_file(url, filepath, cookies=None):
+def download_file(url, filepath, cookies=None, headers=None):
     """Download a file with progress bar. Skips if already exists."""
     if filepath.exists():
         logging.info(f"  [skip] {filepath.name}")
         return
     logging.info(f"  [download] {filepath.name}")
-    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies)
+    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies, headers=headers)
     if r.status_code != 200:
         logging.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
         return
@@ -65,7 +68,6 @@ def _load_cookies():
     if COOKIE_FILE.exists():
         try:
             cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
-            # Test if cookies are still valid
             r = requests.get(f"{API_ROOT}/users/self", cookies=cookies)
             if r.status_code == 200:
                 logging.info("저장된 쿠키로 로그인 성공!")
@@ -117,8 +119,6 @@ def sso_login():
 
 def api_get_all(endpoint, cookies, params=None):
     """Fetch all pages from a Canvas API endpoint."""
-    import json
-
     if params is None:
         params = {}
     params["per_page"] = 100
@@ -127,12 +127,10 @@ def api_get_all(endpoint, cookies, params=None):
     while url:
         r = requests.get(url, cookies=cookies, params=params)
         r.raise_for_status()
-        # Canvas prepends "while(1);" to JSON responses as CSRF protection
         text = r.text.removeprefix("while(1);")
         results.extend(json.loads(text))
-        # Follow pagination via Link header
         url = None
-        params = None  # params already encoded in Link URLs
+        params = None
         link = r.headers.get("Link", "")
         for part in link.split(","):
             if 'rel="next"' in part:
@@ -141,7 +139,6 @@ def api_get_all(endpoint, cookies, params=None):
 
 
 def get_courses(cookies, semester=None):
-    """Fetch enrolled courses, optionally filtered by semester."""
     courses = api_get_all("/courses", cookies, {"enrollment_state": "active"})
     if semester:
         courses = [c for c in courses if semester in c.get("name", "")]
@@ -149,37 +146,177 @@ def get_courses(cookies, semester=None):
 
 
 def get_files(cookies, course_id):
-    """Fetch all files in a course."""
     return api_get_all(f"/courses/{course_id}/files", cookies)
 
 
 def get_folders(cookies, course_id):
-    """Fetch all folders in a course."""
     return api_get_all(f"/courses/{course_id}/folders", cookies)
 
 
 def get_assignments(cookies, course_id):
-    """Fetch all assignments in a course."""
     return api_get_all(f"/courses/{course_id}/assignments", cookies)
 
 
 def get_modules(cookies, course_id):
-    """Fetch all modules with items."""
     return api_get_all(f"/courses/{course_id}/modules", cookies, {"include[]": "items"})
+
+
+# --- Video download ---
+
+
+def _create_headless_driver(cookies):
+    """Create a headless Chrome driver with eTL session cookies."""
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    driver = webdriver.Chrome(options=options)
+    driver.implicitly_wait(5)
+    driver.get(ETL_ROOT + "/123")
+    for name, value in cookies.items():
+        driver.add_cookie({"name": name, "value": value, "domain": "myetl.snu.ac.kr"})
+    return driver
+
+
+def download_video_items(cookies, course_id, course_dir: Path):
+    """Download videos from ExternalTool/ExternalUrl module items."""
+    modules = get_modules(cookies, course_id)
+    video_items = []
+    for m in modules:
+        for item in m.get("items", []):
+            if item["type"] in ("ExternalTool", "ExternalUrl"):
+                video_items.append((m["name"], item))
+
+    if not video_items:
+        return
+
+    logging.info(f"\n  영상 ({len(video_items)}개)")
+    video_dir = course_dir / "_videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    driver = None
+    try:
+        for module_name, item in video_items:
+            title = sanitize(item["title"])
+            item_type = item["type"]
+
+            # ExternalUrl: check if YouTube
+            if item_type == "ExternalUrl":
+                ext_url = item.get("external_url", "")
+                if "youtube.com" in ext_url or "youtu.be" in ext_url:
+                    _download_youtube(ext_url, title, video_dir)
+                else:
+                    logging.info(f"  [skip] {title} (외부 링크: {ext_url[:60]})")
+                continue
+
+            # ExternalTool: SNU-CMS or YouTube embedded in iframe
+            html_url = item.get("html_url", "")
+            if not html_url:
+                continue
+
+            if driver is None:
+                driver = _create_headless_driver(cookies)
+
+            try:
+                driver.get(html_url)
+                time.sleep(3)
+
+                # Find tool_content iframe (Canvas LTI container)
+                try:
+                    tool_iframe = driver.find_element(By.ID, "tool_content")
+                except Exception:
+                    logging.info(f"  [skip] {title} (tool_content iframe 없음)")
+                    continue
+
+                driver.switch_to.frame(tool_iframe)
+                inner_iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                if inner_iframes:
+                    driver.switch_to.frame(inner_iframes[0])
+
+                src = driver.page_source
+
+                # YouTube embedded
+                if "onYouTubeIframeAPIReady" in src:
+                    match = re.search(r"videoId:\s*'(.+?)'", src)
+                    if match:
+                        _download_youtube(f"https://www.youtube.com/watch?v={match.group(1)}", title, video_dir)
+                    else:
+                        logging.info(f"  [skip] {title} (YouTube ID 추출 실패)")
+                # SNU-CMS video
+                else:
+                    match = re.search(r'var\s+content_id\s*=\s*"([^"]+)"', src)
+                    if not match:
+                        match = re.search(r'content_id=([a-f0-9]+)', src)
+                    if match:
+                        content_id = match.group(1)
+                        video_url = _get_cms_video_url(content_id)
+                        if video_url:
+                            filepath = video_dir / f"{title}.mp4"
+                            download_file(video_url, filepath, headers={"Referer": "https://lcms.snu.ac.kr"})
+                        else:
+                            logging.info(f"  [skip] {title} (영상 URL 조회 실패)")
+                    else:
+                        logging.info(f"  [skip] {title} (영상 ID 추출 실패)")
+
+                driver.switch_to.default_content()
+
+            except Exception as e:
+                logging.warning(f"  [error] {title}: {e}")
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+    finally:
+        if driver:
+            driver.quit()
+
+
+def _get_cms_video_url(content_id: str) -> str | None:
+    """Fetch actual video CDN URL from SNU-CMS content API."""
+    try:
+        r = requests.get(f"https://lcms.snu.ac.kr/viewer/ssplayer/uniplayer_support/content.php?content_id={content_id}")
+        if r.status_code != 200:
+            return None
+        # Extract progressive media URL from XML
+        match = re.search(r'method="progressive"\s+target="all">([^<]+)\[MEDIA_FILE\]', r.text)
+        if match:
+            return match.group(1) + "screen.mp4"
+        # Fallback: try lcms direct URL
+        return f"https://lcms.snu.ac.kr/contents/snu0000001/{content_id}/contents/media_files/screen.mp4"
+    except Exception:
+        return None
+
+
+def _download_youtube(url, title, video_dir: Path):
+    """Download a YouTube video using yt-dlp."""
+    existing = list(video_dir.glob(f"{title}.*"))
+    if existing:
+        logging.info(f"  [skip] {title} (이미 존재)")
+        return
+    logging.info(f"  [yt-dlp] {title}")
+    try:
+        ydl_opts = {
+            "outtmpl": str(video_dir / f"{title}.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        logging.warning(f"  [error] {title}: {e}")
 
 
 # --- Download logic ---
 
 
 def download_course(cookies, course, output_dir: Path):
-    """Download all files and show assignments for a course."""
+    """Download all files, videos, and show assignments for a course."""
     course_id = course["id"]
     course_name = sanitize(course.get("name", str(course_id)))
     course_dir = output_dir / course_name
     course_dir.mkdir(parents=True, exist_ok=True)
 
     logging.info(f"\n{'='*60}")
-    logging.info(f"📁 {course_name}")
+    logging.info(f" {course_name}")
     logging.info(f"{'='*60}")
 
     # --- Files ---
@@ -190,20 +327,26 @@ def download_course(cookies, course, output_dir: Path):
 
         for f in files:
             folder_path = folders.get(f.get("folder_id"), "")
-            # Strip "course files/" prefix from folder path
+            # Strip "course files/" prefix, use eTL folder structure directly
             folder_path = re.sub(r"^course files/?", "", folder_path)
-            file_dir = course_dir / "files" / folder_path if folder_path else course_dir / "files"
+            file_dir = course_dir / folder_path if folder_path else course_dir
             filepath = file_dir / sanitize(f["display_name"])
             download_file(f["url"], filepath, cookies=cookies)
     except Exception as e:
         logging.warning(f"  파일 목록 조회 실패: {e}")
+
+    # --- Videos ---
+    try:
+        download_video_items(cookies, course_id, course_dir)
+    except Exception as e:
+        logging.warning(f"  영상 다운로드 실패: {e}")
 
     # --- Assignments ---
     try:
         assignments = get_assignments(cookies, course_id)
         if assignments:
             logging.info(f"\n  과제 ({len(assignments)}개)")
-            assignment_dir = course_dir / "assignments"
+            assignment_dir = course_dir / "_assignments"
             assignment_dir.mkdir(parents=True, exist_ok=True)
 
             for a in assignments:
@@ -213,7 +356,6 @@ def download_course(cookies, course, output_dir: Path):
                 sub_types = ", ".join(a.get("submission_types", []))
                 logging.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
 
-                # Save assignment description as HTML
                 desc = a.get("description")
                 if desc:
                     desc_file = assignment_dir / f"{sanitize(name)}.html"
@@ -263,7 +405,6 @@ if __name__ == "__main__":
     if args.lectureId == "all":
         courses = get_courses(cookies, semester=args.semester)
     else:
-        # Single course - fetch its info
         r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
         r.raise_for_status()
         courses = [json.loads(r.text.removeprefix("while(1);"))]
