@@ -304,6 +304,29 @@ def _download_youtube(url, title, video_dir: Path):
         logging.warning(f"  [error] {title}: {e}")
 
 
+def _download_description_files(description_html: str, dest_dir: Path, cookies):
+    """Parse Canvas file links from HTML description and download them."""
+    if not description_html:
+        return
+    # Find all <a> tags with instructure_file_link class
+    seen = set()
+    for tag in re.finditer(r'<a\s[^>]*class="[^"]*instructure_file_link[^"]*"[^>]*>', description_html):
+        tag_html = tag.group(0)
+        title_m = re.search(r'title="([^"]*)"', tag_html)
+        href_m = re.search(r'href="([^"]*)"', tag_html)
+        if not title_m or not href_m:
+            continue
+        title = title_m.group(1)
+        url = href_m.group(1)
+        if title in seen or not url:
+            continue
+        seen.add(title)
+        filepath = dest_dir / sanitize(title)
+        # Remove wrap=1 which forces preview page instead of direct download
+        url = re.sub(r'[?&]wrap=1', '', url)
+        download_file(url, filepath, cookies=cookies)
+
+
 # --- Download logic ---
 
 
@@ -355,9 +378,13 @@ def download_course(cookies, course, output_dir: Path):
                 sub_types = ", ".join(a.get("submission_types", []))
                 logging.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
 
+                desc = a.get("description") or ""
                 desc_file = assignment_dir / f"{sanitize(name)}.html"
                 if not desc_file.exists():
-                    desc_file.write_text(a.get("description") or "", encoding="utf-8")
+                    desc_file.write_text(desc, encoding="utf-8")
+
+                # Download files linked in assignment description
+                _download_description_files(desc, assignment_dir / sanitize(name), cookies)
     except Exception as e:
         logging.warning(f"  과제 목록 조회 실패: {e}")
 
