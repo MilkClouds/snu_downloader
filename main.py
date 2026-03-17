@@ -364,6 +364,7 @@ def download_course(cookies, course, output_dir: Path):
 
 # --- Main ---
 
+# ruff: disable[E501]
 DISCLAIMER = """\
 ==============================================================================================================================
 DISCLAIMER: This program is not affiliated with SNU. Use at your own risk.
@@ -383,6 +384,7 @@ APPLICATION IS SOLELY AT YOUR OWN RISK.
 ==============================================================================================================================
 By using this program, you agree to the above terms.
 =============================================================================================================================="""
+# ruff: enable[E501]
 
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "downloads"
 

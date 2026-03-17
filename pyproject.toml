@@ -25,5 +25,3 @@ bypass-selection = true
 [tool.ruff]
 line-length = 119
 
-[tool.ruff.lint]
-ignore = ["E501"]
