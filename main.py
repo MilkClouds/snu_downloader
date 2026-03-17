@@ -14,7 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from misc import PasswordPromptAction, download, environ_or_required, yes_or_no
+from misc import download, yes_or_no
 
 
 class Lecture:
@@ -33,21 +33,29 @@ class Lecture:
         self.driver.implicitly_wait(5)
 
         if Lecture.cookies is None:
+            # No cookies yet - open visible browser for user to login manually
+            self.driver.quit()
+            options = webdriver.ChromeOptions()
+            options.add_experimental_option("excludeSwitches", ["enable-logging"])
+            self.driver = webdriver.Chrome(options=options)
+            self.driver.implicitly_wait(5)
+
             self.driver.get(Lecture.urlRoot)
-            element = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "input#login_id"))
-            )
-
-            self.driver.find_element(By.CSS_SELECTOR, "input#login_id").send_keys(args.username)
-            self.driver.find_element(By.CSS_SELECTOR, "input#login_pwd").send_keys(args.password)
-            self.driver.find_element(By.CSS_SELECTOR, 'input[onclick="loginProc();"]').click()
-
-            element = WebDriverWait(self.driver, 10).until(  # noqa: F841
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "#header > div.ic-app-header__main-navigation > div > a")
-                )
-            )
+            logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
+            WebDriverWait(self.driver, 120).until(EC.url_contains("myetl.snu.ac.kr"))
+            logging.info("로그인 성공!")
             Lecture.cookies = self.driver.get_cookies()
+
+            # Switch back to headless for downloads
+            self.driver.quit()
+            options = webdriver.ChromeOptions()
+            options.add_argument("--headless")
+            options.add_experimental_option("excludeSwitches", ["enable-logging"])
+            self.driver = webdriver.Chrome(options=options)
+            self.driver.implicitly_wait(5)
+            self.driver.get(Lecture.urlRoot + "/123")
+            for cookie in Lecture.cookies:
+                self.driver.add_cookie(cookie)
         else:
             # '/123': to bypass domain settings in cookie
             self.driver.get(Lecture.urlRoot + "/123")
@@ -197,16 +205,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="SNU eTL Batch Downloader")
     parser.add_argument("-d", dest="outputDir", default=".", type=Path, help="Directory to save files")
-    parser.add_argument("-l", dest="lectureId", type=str, help="Lecture ID", **environ_or_required("lectureId"))
-    parser.add_argument("-u", dest="username", type=str, help="SNU username", **environ_or_required("username"))
-    parser.add_argument(
-        "-p",
-        dest="password",
-        action=PasswordPromptAction,
-        type=str,
-        help="SNU password",
-        **environ_or_required("password"),
-    )
+    parser.add_argument("-l", dest="lectureId", type=str, required=True, help="Lecture ID or 'all'")
+    parser.add_argument("-s", dest="semester", type=str, default=None, help="Semester filter (e.g. '2026-1')")
     args = parser.parse_args()
 
     try:
@@ -216,7 +216,9 @@ if __name__ == "__main__":
         elif args.lectureId == "all":
             from courses import get_lectures
 
-            Downloader.add_lectures(get_lectures(args.username, args.password))
+            lecture_ids, cookies = get_lectures(semester=args.semester)
+            Lecture.cookies = cookies
+            Downloader.add_lectures(lecture_ids)
         Downloader.download_all_lectures()
     except selenium.common.exceptions.WebDriverException:
         logging.info("[!] Download chromedriver https://chromedriver.chromium.org/downloads")

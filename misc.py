@@ -1,37 +1,10 @@
-import argparse
 import functools
-import getpass
-import os
 import pathlib
 import shutil
 
-import dotenv
 import requests
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
-
-dotenv.load_dotenv(override=True)
-args = argparse.Namespace()
-
-
-class PasswordPromptAction(argparse.Action):
-    def __init__(
-        self, option_strings, dest=None, nargs=0, default=None, required=False, type=None, metavar=None, help=None
-    ):
-        super(PasswordPromptAction, self).__init__(
-            option_strings=option_strings,
-            dest=dest,
-            nargs=nargs,
-            default=default,
-            required=required,
-            metavar=metavar,
-            type=type,
-            help=help,
-        )
-
-    def __call__(self, parser, args, values, option_string=None):
-        password = getpass.getpass()
-        setattr(args, self.dest, password)
 
 
 def yes_or_no(question):
@@ -42,11 +15,6 @@ def yes_or_no(question):
                 return True
             if reply[0] == "n":
                 return False
-
-
-# https://stackoverflow.com/a/45392259
-def environ_or_required(key):
-    return {"default": os.environ.get(key)} if os.environ.get(key) else {"required": True}
 
 
 # modified https://stackoverflow.com/a/63831344
