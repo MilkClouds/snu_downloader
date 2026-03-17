@@ -2,7 +2,6 @@ import argparse
 import functools
 import json
 import logging
-import pathlib
 import re
 import shutil
 import time
@@ -12,8 +11,6 @@ import requests
 import yt_dlp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -245,7 +242,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
                 else:
                     match = re.search(r'var\s+content_id\s*=\s*"([^"]+)"', src)
                     if not match:
-                        match = re.search(r'content_id=([a-f0-9]+)', src)
+                        match = re.search(r"content_id=([a-f0-9]+)", src)
                     if match:
                         content_id = match.group(1)
                         video_url = _get_cms_video_url(content_id)
@@ -273,7 +270,9 @@ def download_video_items(cookies, course_id, course_dir: Path):
 def _get_cms_video_url(content_id: str) -> str | None:
     """Fetch actual video CDN URL from SNU-CMS content API."""
     try:
-        r = requests.get(f"https://lcms.snu.ac.kr/viewer/ssplayer/uniplayer_support/content.php?content_id={content_id}")
+        r = requests.get(
+            f"https://lcms.snu.ac.kr/viewer/ssplayer/uniplayer_support/content.php?content_id={content_id}"
+        )
         if r.status_code != 200:
             return None
         # Extract progressive media URL from XML
@@ -315,9 +314,9 @@ def download_course(cookies, course, output_dir: Path):
     course_dir = output_dir / course_name
     course_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"\n{'='*60}")
+    logging.info(f"\n{'=' * 60}")
     logging.info(f" {course_name}")
-    logging.info(f"{'='*60}")
+    logging.info(f"{'=' * 60}")
 
     # --- Files ---
     try:
@@ -397,20 +396,29 @@ if __name__ == "__main__":
         epilog="Examples:\n"
         "  %(prog)s                          # download all current courses\n"
         "  %(prog)s -s 2026-1                # download 2026 spring semester only\n"
-        "  %(prog)s -l 296200                # download a single course by ID\n"
+        "  %(prog)s -l 123456                # download a single course by ID\n"
         "  %(prog)s -s 2026-1 -d ~/lectures  # save to custom directory\n"
         "  %(prog)s --logout                 # clear saved login session\n",
     )
-    parser.add_argument("-d", "--dir", dest="outputDir", default=DEFAULT_OUTPUT_DIR, type=Path,
-                        help=f"output directory (default: {DEFAULT_OUTPUT_DIR})")
-    parser.add_argument("-l", "--lecture", dest="lectureId", type=str, default="all",
-                        help="course ID, or 'all' to download every enrolled course (default: all)")
-    parser.add_argument("-s", "--semester", type=str, default=None,
-                        help="filter courses by semester (e.g. '2026-1')")
-    parser.add_argument("-y", "--yes", action="store_true",
-                        help="skip the disclaimer prompt")
-    parser.add_argument("--logout", action="store_true",
-                        help="clear saved login cookies and exit")
+    parser.add_argument(
+        "-d",
+        "--dir",
+        dest="outputDir",
+        default=DEFAULT_OUTPUT_DIR,
+        type=Path,
+        help=f"output directory (default: {DEFAULT_OUTPUT_DIR})",
+    )
+    parser.add_argument(
+        "-l",
+        "--lecture",
+        dest="lectureId",
+        type=str,
+        default="all",
+        help="course ID, or 'all' to download every enrolled course (default: all)",
+    )
+    parser.add_argument("-s", "--semester", type=str, default=None, help="filter courses by semester (e.g. '2026-1')")
+    parser.add_argument("-y", "--yes", action="store_true", help="skip the disclaimer prompt")
+    parser.add_argument("--logout", action="store_true", help="clear saved login cookies and exit")
     args = parser.parse_args()
 
     # Handle --logout
@@ -448,7 +456,7 @@ if __name__ == "__main__":
         for course in courses:
             download_course(cookies, course, args.outputDir)
 
-        logging.info(f"\n완료!")
+        logging.info("\n완료!")
 
     except KeyboardInterrupt:
         logging.info("\n\n중단되었습니다.")
