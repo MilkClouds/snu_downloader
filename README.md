@@ -72,7 +72,7 @@ downloads/
 
 ## Disclaimer
 
-This program is not affiliated with Seoul National University. Use at your own risk. Your credentials are only used for eTL authentication and are not stored or transmitted elsewhere.
+This program is not affiliated with Seoul National University. Use at your own risk.
 
 ## Libraries Under Consideration
 
