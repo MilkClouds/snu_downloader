@@ -356,11 +356,9 @@ def download_course(cookies, course, output_dir: Path):
                 sub_types = ", ".join(a.get("submission_types", []))
                 logging.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
 
-                desc = a.get("description")
-                if desc:
-                    desc_file = assignment_dir / f"{sanitize(name)}.html"
-                    if not desc_file.exists():
-                        desc_file.write_text(desc, encoding="utf-8")
+                desc_file = assignment_dir / f"{sanitize(name)}.html"
+                if not desc_file.exists():
+                    desc_file.write_text(a.get("description") or "", encoding="utf-8")
     except Exception as e:
         logging.warning(f"  과제 목록 조회 실패: {e}")
 
