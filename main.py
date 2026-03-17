@@ -266,7 +266,7 @@ if __name__ == "__main__":
         # Single course - fetch its info
         r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
         r.raise_for_status()
-        courses = [r.json()]
+        courses = [json.loads(r.text.removeprefix("while(1);"))]
 
     logging.info(f"\n{len(courses)}개 강의 발견")
     for course in courses:
