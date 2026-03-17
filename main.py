@@ -17,7 +17,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from seleniumbase import SB
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -59,21 +58,32 @@ def download(url, filename, *args, **kwargs):
 # --- Course fetching ---
 
 
-def wait_for_etl_login(sb, timeout=120):
-    """Open eTL and wait for the user to complete SSO login (including MFA)."""
-    sb.open("https://myetl.snu.ac.kr")
+def _create_driver(headless=True):
+    options = webdriver.ChromeOptions()
+    if headless:
+        options.add_argument("--headless")
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    driver = webdriver.Chrome(options=options)
+    driver.implicitly_wait(5)
+    return driver
+
+
+def _wait_for_etl_login(driver, timeout=120):
+    """Wait for the user to complete SSO login (including MFA)."""
+    import time
+
+    driver.get("https://myetl.snu.ac.kr")
     logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
     for _ in range(timeout):
-        sb.sleep(1)
+        time.sleep(1)
         try:
-            # Dismiss any unexpected alerts
-            alert = sb.driver.switch_to.alert
+            alert = driver.switch_to.alert
             alert.accept()
             continue
         except Exception:
             pass
         try:
-            url = sb.get_current_url()
+            url = driver.current_url
             if "myetl.snu.ac.kr" in url and "nsso" not in url:
                 logging.info("로그인 성공!")
                 return
@@ -84,11 +94,14 @@ def wait_for_etl_login(sb, timeout=120):
 
 def get_lectures(semester: str = None):
     logging.info("Fetching lecture list...")
-    with SB(headless=False) as sb:
-        wait_for_etl_login(sb)
-        sb.open("https://myetl.snu.ac.kr/courses")
-        sb.sleep(3)
-        trs = sb.find_elements("#my_courses_table > tbody > tr")
+    driver = _create_driver(headless=False)
+    try:
+        _wait_for_etl_login(driver)
+        driver.get("https://myetl.snu.ac.kr/courses")
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "#my_courses_table"))
+        )
+        trs = driver.find_elements(By.CSS_SELECTOR, "#my_courses_table > tbody > tr")
         lectures = []
         for tr in trs:
             try:
@@ -98,9 +111,11 @@ def get_lectures(semester: str = None):
                 lectures.append(tr.find_element(By.CSS_SELECTOR, "a").get_attribute("href").split("/")[-1])
             except Exception:
                 pass
-        cookies = sb.driver.get_cookies()
+        cookies = driver.get_cookies()
         logging.info(f"Fetched lectures (semester={semester}): {lectures}")
         return lectures, cookies
+    finally:
+        driver.quit()
 
 
 # --- Lecture & Downloader ---
@@ -115,41 +130,18 @@ class Lecture:
         self.lectureName = None
         self.lectureFiles = []
 
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        self.driver = webdriver.Chrome(options=options)
-        self.driver.implicitly_wait(5)
-
         if Lecture.cookies is None:
             # No cookies yet - open visible browser for user to login manually
-            self.driver.quit()
-            options = webdriver.ChromeOptions()
-            options.add_experimental_option("excludeSwitches", ["enable-logging"])
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.implicitly_wait(5)
+            driver = _create_driver(headless=False)
+            _wait_for_etl_login(driver)
+            Lecture.cookies = driver.get_cookies()
+            driver.quit()
 
-            self.driver.get(Lecture.urlRoot)
-            logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
-            WebDriverWait(self.driver, 120).until(EC.url_contains("myetl.snu.ac.kr"))
-            logging.info("로그인 성공!")
-            Lecture.cookies = self.driver.get_cookies()
-
-            # Switch back to headless for downloads
-            self.driver.quit()
-            options = webdriver.ChromeOptions()
-            options.add_argument("--headless")
-            options.add_experimental_option("excludeSwitches", ["enable-logging"])
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.implicitly_wait(5)
-            self.driver.get(Lecture.urlRoot + "/123")
-            for cookie in Lecture.cookies:
-                self.driver.add_cookie(cookie)
-        else:
-            # '/123': to bypass domain settings in cookie
-            self.driver.get(Lecture.urlRoot + "/123")
-            for cookie in Lecture.cookies:
-                self.driver.add_cookie(cookie)
+        self.driver = _create_driver(headless=True)
+        # '/123': to bypass domain settings in cookie
+        self.driver.get(Lecture.urlRoot + "/123")
+        for cookie in Lecture.cookies:
+            self.driver.add_cookie(cookie)
 
         self.hrefs = []
         try:
