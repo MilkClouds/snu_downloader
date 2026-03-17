@@ -7,13 +7,9 @@ requires-python = ">=3.11"
 authors = [{ name = "MilkClouds", email = "milkclouds@snu.ac.kr" }]
 dependencies = [
   "selenium",
-  "python-dotenv",
-  "bs4",
-  "yt-dlp",
-  "ptest",
   "seleniumbase",
-  "plyer",
-  "python-telegram-bot==13.15",
+  "yt-dlp",
+  "requests",
   "tqdm",
 ]
 
