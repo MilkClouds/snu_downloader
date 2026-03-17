@@ -387,30 +387,71 @@ APPLICATION IS SOLELY AT YOUR OWN RISK.
 By using this program, you agree to the above terms.
 =============================================================================================================================="""
 
+DEFAULT_OUTPUT_DIR = Path(__file__).parent / "downloads"
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info(DISCLAIMER)
 
-    if not yes_or_no("Do you agree with the terms above?"):
-        exit()
-
-    parser = argparse.ArgumentParser(description="SNU eTL Batch Downloader")
-    parser.add_argument("-d", dest="outputDir", default=".", type=Path, help="Directory to save files")
-    parser.add_argument("-l", dest="lectureId", type=str, default="all", help="Lecture ID or 'all'")
-    parser.add_argument("-s", dest="semester", type=str, default=None, help="Semester filter (e.g. '2026-1')")
+    parser = argparse.ArgumentParser(
+        description="SNU eTL Batch Downloader — download lecture files, videos, and assignments",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+        "  %(prog)s                          # download all current courses\n"
+        "  %(prog)s -s 2026-1                # download 2026 spring semester only\n"
+        "  %(prog)s -l 296200                # download a single course by ID\n"
+        "  %(prog)s -s 2026-1 -d ~/lectures  # save to custom directory\n"
+        "  %(prog)s --logout                 # clear saved login session\n",
+    )
+    parser.add_argument("-d", "--dir", dest="outputDir", default=DEFAULT_OUTPUT_DIR, type=Path,
+                        help=f"output directory (default: {DEFAULT_OUTPUT_DIR})")
+    parser.add_argument("-l", "--lecture", dest="lectureId", type=str, default="all",
+                        help="course ID, or 'all' to download every enrolled course (default: all)")
+    parser.add_argument("-s", "--semester", type=str, default=None,
+                        help="filter courses by semester (e.g. '2026-1')")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="skip the disclaimer prompt")
+    parser.add_argument("--logout", action="store_true",
+                        help="clear saved login cookies and exit")
     args = parser.parse_args()
 
-    cookies = sso_login()
+    # Handle --logout
+    if args.logout:
+        if COOKIE_FILE.exists():
+            COOKIE_FILE.unlink()
+            logging.info("로그인 세션이 삭제되었습니다.")
+        else:
+            logging.info("저장된 세션이 없습니다.")
+        exit()
 
-    if args.lectureId == "all":
-        courses = get_courses(cookies, semester=args.semester)
-    else:
-        r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
-        r.raise_for_status()
-        courses = [json.loads(r.text.removeprefix("while(1);"))]
+    # Disclaimer
+    if not args.yes:
+        logging.info(DISCLAIMER)
+        if not yes_or_no("Do you agree with the terms above?"):
+            exit()
 
-    logging.info(f"\n{len(courses)}개 강의 발견")
-    for course in courses:
-        download_course(cookies, course, args.outputDir)
+    try:
+        cookies = sso_login()
 
-    logging.info(f"\n완료!")
+        if args.lectureId == "all":
+            courses = get_courses(cookies, semester=args.semester)
+        else:
+            r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
+            r.raise_for_status()
+            courses = [json.loads(r.text.removeprefix("while(1);"))]
+
+        if not courses:
+            logging.info("조건에 맞는 강의가 없습니다.")
+            exit()
+
+        logging.info(f"\n{len(courses)}개 강의 발견")
+        logging.info(f"저장 경로: {args.outputDir.resolve()}\n")
+
+        for course in courses:
+            download_course(cookies, course, args.outputDir)
+
+        logging.info(f"\n완료!")
+
+    except KeyboardInterrupt:
+        logging.info("\n\n중단되었습니다.")
+        exit(1)
