@@ -83,6 +83,7 @@ By using this program, you agree to the above terms.
 # Libraries Under Consideration
 - [SeleniumBase](https://github.com/seleniumbase/SeleniumBase) — Selenium-based browser automation framework
 - [Vibium](https://github.com/VibiumDev/vibium) — Browser automation tool
+- [Helium](https://github.com/mherrmann/helium) — Lightweight Selenium wrapper
 
 # Credit
 - [junukwon7](https://github.com/junukwon7)
