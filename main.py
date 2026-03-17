@@ -72,8 +72,8 @@ def _load_cookies():
             if r.status_code == 200:
                 logging.info("저장된 쿠키로 로그인 성공!")
                 return cookies
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"저장된 쿠키 로드 실패: {e}")
     return None
 
 
@@ -329,7 +329,7 @@ def download_course(cookies, course, output_dir: Path):
             folder_path = folders.get(f.get("folder_id"), "")
             # Strip "course files/" prefix, use eTL folder structure directly
             folder_path = re.sub(r"^course files/?", "", folder_path)
-            file_dir = course_dir / folder_path if folder_path else course_dir
+            file_dir = course_dir / folder_path
             filepath = file_dir / sanitize(f["display_name"])
             download_file(f["url"], filepath, cookies=cookies)
     except Exception as e:
