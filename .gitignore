@@ -1,6 +1,30 @@
-__pycache__/
-*.pyc
-downloads/
+/downloads
 .cookies.json
 
 .omc/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+log.txt
+*.log
