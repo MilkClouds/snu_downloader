@@ -1,6 +1,7 @@
 /downloads
 .cookies.json
 
+.openchrome
 .omc/
 
 # Python
