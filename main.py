@@ -35,11 +35,13 @@ def sanitize(name: str) -> str:
     return re.sub(r'[\\/:"*?<>|]+', "", name)
 
 
-def download_file(url, filepath, cookies=None, headers=None):
-    """Download a file with progress bar. Skips if already exists."""
+def download_file(url, filepath, cookies=None, headers=None, remote_size=None):
+    """Download a file with progress bar. Skips if already exists and size matches."""
     if filepath.exists():
-        logging.info(f"  [skip] {filepath.name}")
-        return
+        if remote_size is None or filepath.stat().st_size == remote_size:
+            logging.info(f"  [skip] {filepath.name}")
+            return
+        logging.info(f"  [update] {filepath.name}")
     logging.info(f"  [download] {filepath.name}")
     r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies, headers=headers)
     if r.status_code != 200:
@@ -353,7 +355,7 @@ def download_course(cookies, course, output_dir: Path):
             folder_path = re.sub(r"^course files/?", "", folder_path)
             file_dir = course_dir / folder_path
             filepath = file_dir / sanitize(f["display_name"])
-            download_file(f["url"], filepath, cookies=cookies)
+            download_file(f["url"], filepath, cookies=cookies, remote_size=f.get("size"))
     except Exception as e:
         logging.warning(f"  파일 목록 조회 실패: {e}")
 
