@@ -325,7 +325,7 @@ def _download_description_files(description_html: str, dest_dir: Path, cookies):
         seen.add(title)
         filepath = dest_dir / sanitize(title)
         # Remove wrap=1 which forces preview page instead of direct download
-        url = re.sub(r'[?&]wrap=1', '', url)
+        url = re.sub(r"[?&]wrap=1", "", url)
         download_file(url, filepath, cookies=cookies)
 
 

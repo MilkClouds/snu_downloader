@@ -118,9 +118,7 @@ def main() -> None:
     submission_by_assignment: dict[int, dict] = {}
     for c in courses:
         try:
-            assignments = api_get_all(
-                f"/courses/{c['id']}/assignments", cookies, {"include[]": "submission"}
-            )
+            assignments = api_get_all(f"/courses/{c['id']}/assignments", cookies, {"include[]": "submission"})
         except Exception as e:
             logging.warning(f"  [error] {c.get('name')} 과제 조회 실패: {e}")
             continue
