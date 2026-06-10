@@ -163,6 +163,12 @@ def get_modules(cookies, course_id):
 # --- Video download ---
 
 
+# LearningX (Xinics) session cookies. These hold a short-lived (2h) JWT; injecting a
+# stale one makes the LTI launch reuse the expired token instead of minting a fresh one,
+# which breaks the LearningX API. Skip them so each launch re-mints from the Canvas session.
+_LEARNINGX_COOKIES = {"xn_api_token", "laravel_session", "pni_token", "XSRF-TOKEN"}
+
+
 def _create_headless_driver(cookies):
     """Create a headless Chrome driver with eTL session cookies."""
     options = webdriver.ChromeOptions()
@@ -172,6 +178,8 @@ def _create_headless_driver(cookies):
     driver.implicitly_wait(5)
     driver.get(ETL_ROOT + "/123")
     for name, value in cookies.items():
+        if name in _LEARNINGX_COOKIES:
+            continue
         driver.add_cookie({"name": name, "value": value, "domain": "myetl.snu.ac.kr"})
     return driver
 
@@ -207,13 +215,20 @@ def download_video_items(cookies, course_id, course_dir: Path):
                     logging.info(f"  [skip] {title} (외부 링크: {ext_url[:60]})")
                 continue
 
-            # ExternalTool: SNU-CMS or YouTube embedded in iframe
+            # ExternalTool: LearningX lecture_attendance, SNU-CMS, or YouTube iframe
             html_url = item.get("html_url", "")
             if not html_url:
                 continue
 
             if driver is None:
                 driver = _create_headless_driver(cookies)
+
+            # LearningX lecture_attendance: resolve the video via the attendance API.
+            ext_url = item.get("external_url", "") or ""
+            att_match = re.search(r"lecture_attendance/items/view/(\d+)", ext_url)
+            if att_match:
+                _download_attendance_video(driver, course_id, att_match.group(1), html_url, title, video_dir)
+                continue
 
             try:
                 driver.get(html_url)
@@ -246,13 +261,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
                     if not match:
                         match = re.search(r"content_id=([a-f0-9]+)", src)
                     if match:
-                        content_id = match.group(1)
-                        video_url = _get_cms_video_url(content_id)
-                        if video_url:
-                            filepath = video_dir / f"{title}.mp4"
-                            download_file(video_url, filepath, headers={"Referer": "https://lcms.snu.ac.kr"})
-                        else:
-                            logging.info(f"  [skip] {title} (영상 URL 조회 실패)")
+                        _download_cms_video(match.group(1), title, video_dir)
                     else:
                         logging.info(f"  [skip] {title} (영상 ID 추출 실패)")
 
@@ -267,6 +276,59 @@ def download_video_items(cookies, course_id, course_dir: Path):
     finally:
         if driver:
             driver.quit()
+
+
+def _wait_for_cookie(driver, name, timeout=12):
+    """Poll the browser until a cookie named `name` appears, returning its value or None."""
+    for _ in range(timeout):
+        cookie = driver.get_cookie(name)
+        if cookie:
+            return cookie["value"]
+        time.sleep(1)
+    return None
+
+
+def _download_cms_video(content_id, title, video_dir: Path):
+    """Resolve a SNU-CMS content_id to its CDN URL and download it."""
+    video_url = _get_cms_video_url(content_id)
+    if not video_url:
+        logging.info(f"  [skip] {title} (영상 URL 조회 실패)")
+        return
+    # The CMS API exposes no byte count that matches the CDN's served size, so skip
+    # only when the file already exists rather than verifying length.
+    filepath = video_dir / f"{title}.mp4"
+    download_file(video_url, filepath, headers={"Referer": "https://lcms.snu.ac.kr"})
+
+
+def _download_attendance_video(driver, course_id, attendance_item_id, html_url, title, video_dir: Path):
+    """Download a LearningX lecture_attendance video (SNU-LCMS hosted)."""
+    # Loading the module item page performs the LTI launch, which mints a fresh
+    # LearningX JWT into the `xn_api_token` cookie.
+    driver.get(html_url)
+    token = _wait_for_cookie(driver, "xn_api_token")
+    if not token:
+        logging.info(f"  [skip] {title} (LearningX 토큰 없음)")
+        return
+
+    try:
+        r = requests.get(
+            f"{ETL_ROOT}/learningx/api/v1/courses/{course_id}/attendance_items/{attendance_item_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if r.status_code != 200:
+            logging.info(f"  [skip] {title} (attendance API HTTP {r.status_code})")
+            return
+        data = r.json()
+    except Exception as e:
+        logging.info(f"  [skip] {title} (attendance API 오류: {e})")
+        return
+
+    content_id = (data.get("item_content_data") or {}).get("content_id")
+    if not content_id:
+        logging.info(f"  [skip] {title} (content_id 없음)")
+        return
+
+    _download_cms_video(content_id, title, video_dir)
 
 
 def _get_cms_video_url(content_id: str) -> str | None:
