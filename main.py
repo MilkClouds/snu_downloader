@@ -4,16 +4,20 @@ import json
 import logging
 import re
 import shutil
+import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
+import urllib3
 import yt_dlp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from tqdm.auto import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
+
+logger = logging.getLogger(__name__)
 
 ETL_ROOT = "https://myetl.snu.ac.kr"
 API_ROOT = f"{ETL_ROOT}/api/v1"
@@ -48,16 +52,16 @@ def download_file(url, filepath, cookies=None, headers=None, remote_size=None, r
     local_size = filepath.stat().st_size if filepath.exists() else 0
     if local_size:
         if remote_size is None or local_size == remote_size:
-            logging.info(f"  [skip] {filepath.name}")
+            logger.info(f"  [skip] {filepath.name}")
             return
         if resume and local_size < remote_size:
             headers["Range"] = f"bytes={local_size}-"
-            logging.info(f"  [resume] {filepath.name} ({local_size / 1e6:.0f} MB부터)")
+            logger.info(f"  [resume] {filepath.name} ({local_size / 1e6:.0f} MB부터)")
         else:
             local_size = 0
-            logging.info(f"  [update] {filepath.name}")
+            logger.info(f"  [update] {filepath.name}")
     if not local_size:
-        logging.info(f"  [download] {filepath.name}")
+        logger.info(f"  [download] {filepath.name}")
     try:
         r = requests.get(
             url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
@@ -71,22 +75,25 @@ def download_file(url, filepath, cookies=None, headers=None, remote_size=None, r
                 url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
             )
     except requests.RequestException as e:
-        logging.warning(f"  [error] {filepath.name} - 요청 실패 ({e.__class__.__name__})")
+        logger.warning(f"  [error] {filepath.name} - 요청 실패 ({e.__class__.__name__})")
         return
     if r.status_code not in (200, 206):
-        logging.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
+        logger.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
         return
     file_size = int(r.headers.get("Content-Length", 0)) + local_size
     filepath.parent.mkdir(parents=True, exist_ok=True)
     r.raw.read = functools.partial(r.raw.read, decode_content=True)
     mode = "ab" if local_size else "wb"
     try:
-        with logging_redirect_tqdm():
-            with tqdm.wrapattr(r.raw, "read", total=file_size, initial=local_size, desc="") as r_raw:
-                with filepath.open(mode) as f:
-                    shutil.copyfileobj(r_raw, f)
-    except (requests.RequestException, OSError) as e:
-        logging.warning(f"  [error] {filepath.name} - 중단됨 ({e.__class__.__name__}); 재실행 시 이어받기")
+        with (
+            logging_redirect_tqdm(),
+            tqdm.wrapattr(r.raw, "read", total=file_size, initial=local_size, desc="") as r_raw,
+            filepath.open(mode) as f,
+        ):
+            shutil.copyfileobj(r_raw, f)
+    except (requests.RequestException, urllib3.exceptions.HTTPError, OSError) as e:
+        # shutil reads r.raw directly, so stalls surface as urllib3 errors, not requests ones.
+        logger.warning(f"  [error] {filepath.name} - 중단됨 ({e.__class__.__name__}); 재실행 시 이어받기")
 
 
 # --- SSO Login ---
@@ -102,10 +109,10 @@ def _load_cookies():
             cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
             r = requests.get(f"{API_ROOT}/users/self", cookies=cookies)
             if r.status_code == 200:
-                logging.info("저장된 쿠키로 로그인 성공!")
+                logger.info("저장된 쿠키로 로그인 성공!")
                 return cookies
         except Exception as e:
-            logging.debug(f"저장된 쿠키 로드 실패: {e}")
+            logger.debug(f"저장된 쿠키 로드 실패: {e}")
     return None
 
 
@@ -121,7 +128,7 @@ def sso_login():
     driver.implicitly_wait(5)
 
     driver.get(ETL_ROOT)
-    logging.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
+    logger.info("브라우저에서 SSO 로그인을 완료해주세요 (MFA 포함)...")
 
     for _ in range(120):
         time.sleep(1)
@@ -134,7 +141,7 @@ def sso_login():
         try:
             url = driver.current_url
             if "myetl.snu.ac.kr" in url and "nsso" not in url:
-                logging.info("로그인 성공!")
+                logger.info("로그인 성공!")
                 cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
                 driver.quit()
                 _save_cookies(cookies)
@@ -229,7 +236,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
     if not video_items:
         return
 
-    logging.info(f"\n  영상 ({len(video_items)}개)")
+    logger.info(f"\n  영상 ({len(video_items)}개)")
     video_dir = course_dir / "_videos"
     video_dir.mkdir(parents=True, exist_ok=True)
 
@@ -245,7 +252,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
                 if "youtube.com" in ext_url or "youtu.be" in ext_url:
                     _download_youtube(ext_url, title, video_dir)
                 else:
-                    logging.info(f"  [skip] {title} (외부 링크: {ext_url[:60]})")
+                    logger.info(f"  [skip] {title} (외부 링크: {ext_url[:60]})")
                 continue
 
             # ExternalTool: LearningX lecture_attendance, SNU-CMS, or YouTube iframe
@@ -271,7 +278,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
                 try:
                     tool_iframe = driver.find_element(By.ID, "tool_content")
                 except Exception:
-                    logging.info(f"  [skip] {title} (tool_content iframe 없음)")
+                    logger.info(f"  [skip] {title} (tool_content iframe 없음)")
                     continue
 
                 driver.switch_to.frame(tool_iframe)
@@ -287,7 +294,7 @@ def download_video_items(cookies, course_id, course_dir: Path):
                     if match:
                         _download_youtube(f"https://www.youtube.com/watch?v={match.group(1)}", title, video_dir)
                     else:
-                        logging.info(f"  [skip] {title} (YouTube ID 추출 실패)")
+                        logger.info(f"  [skip] {title} (YouTube ID 추출 실패)")
                 # SNU-CMS video
                 else:
                     match = re.search(r'var\s+content_id\s*=\s*"([^"]+)"', src)
@@ -296,12 +303,12 @@ def download_video_items(cookies, course_id, course_dir: Path):
                     if match:
                         _download_cms_video(match.group(1), title, video_dir)
                     else:
-                        logging.info(f"  [skip] {title} (영상 ID 추출 실패)")
+                        logger.info(f"  [skip] {title} (영상 ID 추출 실패)")
 
                 driver.switch_to.default_content()
 
             except Exception as e:
-                logging.warning(f"  [error] {title}: {e}")
+                logger.warning(f"  [error] {title}: {e}")
                 try:
                     driver.switch_to.default_content()
                 except Exception:
@@ -325,7 +332,7 @@ def _download_cms_video(content_id, title, video_dir: Path):
     """Resolve a SNU-CMS content_id to its CDN URL and download it (resumable)."""
     video_url = _get_cms_video_url(content_id)
     if not video_url:
-        logging.info(f"  [skip] {title} (영상 URL 조회 실패)")
+        logger.info(f"  [skip] {title} (영상 URL 조회 실패)")
         return
     headers = {"Referer": "https://lcms.snu.ac.kr"}
     remote_size = None
@@ -346,7 +353,7 @@ def _download_attendance_video(driver, course_id, attendance_item_id, html_url, 
     driver.get(html_url)
     token = _wait_for_cookie(driver, "xn_api_token")
     if not token:
-        logging.info(f"  [skip] {title} (LearningX 토큰 없음)")
+        logger.info(f"  [skip] {title} (LearningX 토큰 없음)")
         return
 
     try:
@@ -355,16 +362,16 @@ def _download_attendance_video(driver, course_id, attendance_item_id, html_url, 
             headers={"Authorization": f"Bearer {token}"},
         )
         if r.status_code != 200:
-            logging.info(f"  [skip] {title} (attendance API HTTP {r.status_code})")
+            logger.info(f"  [skip] {title} (attendance API HTTP {r.status_code})")
             return
         data = r.json()
     except Exception as e:
-        logging.info(f"  [skip] {title} (attendance API 오류: {e})")
+        logger.info(f"  [skip] {title} (attendance API 오류: {e})")
         return
 
     content_id = (data.get("item_content_data") or {}).get("content_id")
     if not content_id:
-        logging.info(f"  [skip] {title} (content_id 없음)")
+        logger.info(f"  [skip] {title} (content_id 없음)")
         return
 
     _download_cms_video(content_id, title, video_dir)
@@ -406,9 +413,9 @@ def _download_youtube(url, title, video_dir: Path):
     """Download a YouTube video using yt-dlp."""
     existing = [p for p in video_dir.glob(f"{title}.*") if not p.name.endswith(".part")]
     if existing:
-        logging.info(f"  [skip] {title} (이미 존재)")
+        logger.info(f"  [skip] {title} (이미 존재)")
         return
-    logging.info(f"  [yt-dlp] {title}")
+    logger.info(f"  [yt-dlp] {title}")
     try:
         ydl_opts = {
             "outtmpl": str(video_dir / f"{title}.%(ext)s"),
@@ -418,7 +425,7 @@ def _download_youtube(url, title, video_dir: Path):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except Exception as e:
-        logging.warning(f"  [error] {title}: {e}")
+        logger.warning(f"  [error] {title}: {e}")
 
 
 def _download_description_files(description_html: str, dest_dir: Path, cookies):
@@ -454,15 +461,15 @@ def download_course(cookies, course, output_dir: Path):
     course_dir = output_dir / course_name
     course_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"\n{'=' * 60}")
-    logging.info(f" {course_name}")
-    logging.info(f"{'=' * 60}")
+    logger.info(f"\n{'=' * 60}")
+    logger.info(f" {course_name}")
+    logger.info(f"{'=' * 60}")
 
     # --- Files ---
     try:
         folders = {f["id"]: f.get("full_name", "") for f in get_folders(cookies, course_id)}
         files = get_files(cookies, course_id)
-        logging.info(f"\n  파일 ({len(files)}개)")
+        logger.info(f"\n  파일 ({len(files)}개)")
 
         for f in files:
             folder_path = folders.get(f.get("folder_id"), "")
@@ -472,19 +479,19 @@ def download_course(cookies, course, output_dir: Path):
             filepath = file_dir / sanitize(f["display_name"])
             download_file(f["url"], filepath, cookies=cookies, remote_size=f.get("size"))
     except Exception as e:
-        logging.warning(f"  파일 목록 조회 실패: {e}")
+        logger.warning(f"  파일 목록 조회 실패: {e}")
 
     # --- Videos ---
     try:
         download_video_items(cookies, course_id, course_dir)
     except Exception as e:
-        logging.warning(f"  영상 다운로드 실패: {e}")
+        logger.warning(f"  영상 다운로드 실패: {e}")
 
     # --- Assignments ---
     try:
         assignments = get_assignments(cookies, course_id)
         if assignments:
-            logging.info(f"\n  과제 ({len(assignments)}개)")
+            logger.info(f"\n  과제 ({len(assignments)}개)")
             assignment_dir = course_dir / "_assignments"
             assignment_dir.mkdir(parents=True, exist_ok=True)
 
@@ -493,7 +500,7 @@ def download_course(cookies, course, output_dir: Path):
                 due = a.get("due_at", "기한 없음")
                 points = a.get("points_possible", "?")
                 sub_types = ", ".join(a.get("submission_types", []))
-                logging.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
+                logger.info(f"  [{name}] 마감: {due} | 배점: {points} | 제출: {sub_types}")
 
                 desc = a.get("description") or ""
                 desc_file = assignment_dir / f"{sanitize(name)}.html"
@@ -503,12 +510,11 @@ def download_course(cookies, course, output_dir: Path):
                 # Download files linked in assignment description
                 _download_description_files(desc, assignment_dir / sanitize(name), cookies)
     except Exception as e:
-        logging.warning(f"  과제 목록 조회 실패: {e}")
+        logger.warning(f"  과제 목록 조회 실패: {e}")
 
 
 # --- Main ---
 
-# ruff: disable[E501]
 DISCLAIMER = """\
 ==============================================================================================================================
 DISCLAIMER: This program is not affiliated with SNU. Use at your own risk.
@@ -528,7 +534,6 @@ APPLICATION IS SOLELY AT YOUR OWN RISK.
 ==============================================================================================================================
 By using this program, you agree to the above terms.
 =============================================================================================================================="""
-# ruff: enable[E501]
 
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "downloads"
 
@@ -571,16 +576,16 @@ if __name__ == "__main__":
     if args.logout:
         if COOKIE_FILE.exists():
             COOKIE_FILE.unlink()
-            logging.info("로그인 세션이 삭제되었습니다.")
+            logger.info("로그인 세션이 삭제되었습니다.")
         else:
-            logging.info("저장된 세션이 없습니다.")
-        exit()
+            logger.info("저장된 세션이 없습니다.")
+        sys.exit()
 
     # Disclaimer
     if not args.yes:
-        logging.info(DISCLAIMER)
+        logger.info(DISCLAIMER)
         if not yes_or_no("Do you agree with the terms above?"):
-            exit()
+            sys.exit()
 
     try:
         cookies = sso_login()
@@ -593,17 +598,17 @@ if __name__ == "__main__":
             courses = [json.loads(r.text.removeprefix("while(1);"))]
 
         if not courses:
-            logging.info("조건에 맞는 강의가 없습니다.")
-            exit()
+            logger.info("조건에 맞는 강의가 없습니다.")
+            sys.exit()
 
-        logging.info(f"\n{len(courses)}개 강의 발견")
-        logging.info(f"저장 경로: {args.outputDir.resolve()}\n")
+        logger.info(f"\n{len(courses)}개 강의 발견")
+        logger.info(f"저장 경로: {args.outputDir.resolve()}\n")
 
         for course in courses:
             download_course(cookies, course, args.outputDir)
 
-        logging.info("\n완료!")
+        logger.info("\n완료!")
 
     except KeyboardInterrupt:
-        logging.info("\n\n중단되었습니다.")
-        exit(1)
+        logger.info("\n\n중단되었습니다.")
+        sys.exit(1)
