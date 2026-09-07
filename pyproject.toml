@@ -15,6 +15,10 @@ dependencies = [
 [dependency-groups]
 dev = ["ruff"]
 
+[tool.uv]
+# uv.lock is not committed; bump this date to upgrade dependencies reproducibly.
+exclude-newer = "2026-09-07T00:00:00Z"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
