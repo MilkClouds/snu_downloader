@@ -29,3 +29,7 @@ bypass-selection = true
 [tool.ruff]
 line-length = 119
 
+[tool.ruff.lint]
+# Scraping code intentionally swallows broad exceptions per item and continues.
+ignore = ["BLE001", "S110"]
+

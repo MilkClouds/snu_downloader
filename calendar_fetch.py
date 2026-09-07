@@ -9,9 +9,11 @@ Reuses login/session logic from main.py. Run:
 
 import argparse
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from main import API_ROOT, api_get_all, get_courses, sso_login
+
+logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 
@@ -45,7 +47,7 @@ def fetch_calendar_events(cookies, context_codes, start_date, end_date, event_ty
 def _parse_iso(s: str | None) -> datetime | None:
     if not s:
         return None
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return datetime.fromisoformat(s)
 
 
 def _fmt_kst(dt: datetime | None) -> str:
@@ -84,7 +86,7 @@ def _format_entry(
         else:
             marker = " [과제]"
 
-    sort_key = due or datetime.max.replace(tzinfo=timezone.utc)
+    sort_key = due or datetime.max.replace(tzinfo=UTC)
     line = f"  {_fmt_kst(due):<22} | {course_label:<30} | {title}{marker}"
     return sort_key, line
 
@@ -107,7 +109,7 @@ def main() -> None:
     cookies = sso_login()
     courses = get_courses(cookies, semester=args.semester)
     if not courses:
-        logging.info("조건에 맞는 강의가 없습니다.")
+        logger.info("조건에 맞는 강의가 없습니다.")
         return
 
     context_codes = [f"course_{c['id']}" for c in courses]
@@ -120,20 +122,20 @@ def main() -> None:
         try:
             assignments = api_get_all(f"/courses/{c['id']}/assignments", cookies, {"include[]": "submission"})
         except Exception as e:
-            logging.warning(f"  [error] {c.get('name')} 과제 조회 실패: {e}")
+            logger.warning(f"  [error] {c.get('name')} 과제 조회 실패: {e}")
             continue
         for a in assignments:
             sub = a.get("submission")
             if sub is not None:
                 submission_by_assignment[a["id"]] = sub
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = (now - timedelta(days=args.days)) if args.past else now
     end = now + timedelta(days=args.days)
     start_iso = start.date().isoformat()
     end_iso = end.date().isoformat()
 
-    logging.info(f"강의 {len(courses)}개 | 기간 {start_iso} ~ {end_iso} | {API_ROOT}/calendar_events")
+    logger.info(f"강의 {len(courses)}개 | 기간 {start_iso} ~ {end_iso} | {API_ROOT}/calendar_events")
 
     types = ["event", "assignment"] if args.only == "both" else [args.only]
     entries: list[tuple[datetime, str]] = []
@@ -141,22 +143,22 @@ def main() -> None:
         try:
             events = fetch_calendar_events(cookies, context_codes, start_iso, end_iso, t)
         except Exception as e:
-            logging.warning(f"  [error] type={t} 조회 실패: {e}")
+            logger.warning(f"  [error] type={t} 조회 실패: {e}")
             continue
-        logging.info(f"  {t}: {len(events)}개")
+        logger.info(f"  {t}: {len(events)}개")
         for ev in events:
             entries.append(_format_entry(ev, course_name_by_code, submission_by_assignment))
 
     entries.sort(key=lambda x: x[0])
     if not entries:
-        logging.info("\n표시할 일정이 없습니다.")
+        logger.info("\n표시할 일정이 없습니다.")
         return
 
-    logging.info("\n" + "=" * 80)
-    logging.info(f" 일정 ({len(entries)}개)")
-    logging.info("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info(f" 일정 ({len(entries)}개)")
+    logger.info("=" * 80)
     for _, line in entries:
-        logging.info(line)
+        logger.info(line)
 
 
 if __name__ == "__main__":
