@@ -25,6 +25,8 @@ cd snu_downloader
 uv sync
 ```
 
+`uv.lock` is not committed. Dependencies resolve against the `exclude-newer` date in `pyproject.toml`; bump that date to upgrade.
+
 ## Usage
 
 ```

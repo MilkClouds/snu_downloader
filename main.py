@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
@@ -35,25 +36,51 @@ def sanitize(name: str) -> str:
     return re.sub(r'[\\/:"*?<>|]+', "", name)
 
 
-def download_file(url, filepath, cookies=None, headers=None, remote_size=None):
-    """Download a file with progress bar. Skips if already exists and size matches."""
-    if filepath.exists():
-        if remote_size is None or filepath.stat().st_size == remote_size:
+REQUEST_TIMEOUT = (10, 60)  # (connect, read) seconds
+
+
+def download_file(url, filepath, cookies=None, headers=None, remote_size=None, resume=False):
+    """Download a file with progress bar. Skips if already exists and size matches.
+
+    With `resume=True`, a smaller existing file is continued via HTTP Range.
+    """
+    headers = dict(headers or {})
+    local_size = filepath.stat().st_size if filepath.exists() else 0
+    if local_size:
+        if remote_size is None or local_size == remote_size:
             logging.info(f"  [skip] {filepath.name}")
             return
-        logging.info(f"  [update] {filepath.name}")
-    logging.info(f"  [download] {filepath.name}")
-    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies, headers=headers)
-    if r.status_code != 200:
+        if resume and local_size < remote_size:
+            headers["Range"] = f"bytes={local_size}-"
+            logging.info(f"  [resume] {filepath.name} ({local_size / 1e6:.0f} MB부터)")
+        else:
+            local_size = 0
+            logging.info(f"  [update] {filepath.name}")
+    if not local_size:
+        logging.info(f"  [download] {filepath.name}")
+    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
+    if local_size and r.status_code != 206:
+        # Server ignored Range; start over.
+        local_size = 0
+        r.close()
+        headers.pop("Range", None)
+        r = requests.get(
+            url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
+    if r.status_code not in (200, 206):
         logging.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
         return
-    file_size = int(r.headers.get("Content-Length", 0))
+    file_size = int(r.headers.get("Content-Length", 0)) + local_size
     filepath.parent.mkdir(parents=True, exist_ok=True)
     r.raw.read = functools.partial(r.raw.read, decode_content=True)
-    with logging_redirect_tqdm():
-        with tqdm.wrapattr(r.raw, "read", total=file_size, desc="") as r_raw:
-            with filepath.open("wb") as f:
-                shutil.copyfileobj(r_raw, f)
+    mode = "ab" if local_size else "wb"
+    try:
+        with logging_redirect_tqdm():
+            with tqdm.wrapattr(r.raw, "read", total=file_size, initial=local_size, desc="") as r_raw:
+                with filepath.open(mode) as f:
+                    shutil.copyfileobj(r_raw, f)
+    except (requests.RequestException, OSError) as e:
+        logging.warning(f"  [error] {filepath.name} - 중단됨 ({e.__class__.__name__}); 재실행 시 이어받기")
 
 
 # --- SSO Login ---
@@ -289,15 +316,21 @@ def _wait_for_cookie(driver, name, timeout=12):
 
 
 def _download_cms_video(content_id, title, video_dir: Path):
-    """Resolve a SNU-CMS content_id to its CDN URL and download it."""
+    """Resolve a SNU-CMS content_id to its CDN URL and download it (resumable)."""
     video_url = _get_cms_video_url(content_id)
     if not video_url:
         logging.info(f"  [skip] {title} (영상 URL 조회 실패)")
         return
-    # The CMS API exposes no byte count that matches the CDN's served size, so skip
-    # only when the file already exists rather than verifying length.
+    headers = {"Referer": "https://lcms.snu.ac.kr"}
+    remote_size = None
+    try:
+        h = requests.head(video_url, headers=headers, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+        if h.status_code == 200 and h.headers.get("Content-Length"):
+            remote_size = int(h.headers["Content-Length"])
+    except requests.RequestException:
+        pass
     filepath = video_dir / f"{title}.mp4"
-    download_file(video_url, filepath, headers={"Referer": "https://lcms.snu.ac.kr"})
+    download_file(video_url, filepath, headers=headers, remote_size=remote_size, resume=True)
 
 
 def _download_attendance_video(driver, course_id, attendance_item_id, html_url, title, video_dir: Path):
@@ -339,7 +372,21 @@ def _get_cms_video_url(content_id: str) -> str | None:
         )
         if r.status_code != 200:
             return None
-        # Extract progressive media URL from XML
+        # Current format: <main_media><desktop|mobile><html5><media_uri>URL</media_uri>
+        try:
+            root = ET.fromstring(r.text)
+            for path in (
+                ".//main_media/desktop/html5/media_uri",
+                ".//main_media/mobile/html5/media_uri",
+                ".//media_uri",
+            ):
+                for el in root.iterfind(path):
+                    uri = (el.text or "").strip()
+                    if uri.startswith("https://"):
+                        return uri
+        except ET.ParseError:
+            pass
+        # Legacy format: method="progressive" target="all">BASE[MEDIA_FILE]
         match = re.search(r'method="progressive"\s+target="all">([^<]+)\[MEDIA_FILE\]', r.text)
         if match:
             return match.group(1) + "screen.mp4"
@@ -351,7 +398,7 @@ def _get_cms_video_url(content_id: str) -> str | None:
 
 def _download_youtube(url, title, video_dir: Path):
     """Download a YouTube video using yt-dlp."""
-    existing = list(video_dir.glob(f"{title}.*"))
+    existing = [p for p in video_dir.glob(f"{title}.*") if not p.name.endswith(".part")]
     if existing:
         logging.info(f"  [skip] {title} (이미 존재)")
         return

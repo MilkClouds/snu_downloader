@@ -29,3 +29,6 @@ Thumbs.db
 # Logs
 log.txt
 *.log
+
+# Lockfile is regenerated from [tool.uv] exclude-newer
+uv.lock
