@@ -58,15 +58,21 @@ def download_file(url, filepath, cookies=None, headers=None, remote_size=None, r
             logging.info(f"  [update] {filepath.name}")
     if not local_size:
         logging.info(f"  [download] {filepath.name}")
-    r = requests.get(url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
-    if local_size and r.status_code != 206:
-        # Server ignored Range; start over.
-        local_size = 0
-        r.close()
-        headers.pop("Range", None)
+    try:
         r = requests.get(
             url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
         )
+        if local_size and r.status_code != 206:
+            # Server ignored Range; start over.
+            local_size = 0
+            r.close()
+            headers.pop("Range", None)
+            r = requests.get(
+                url, stream=True, allow_redirects=True, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+            )
+    except requests.RequestException as e:
+        logging.warning(f"  [error] {filepath.name} - 요청 실패 ({e.__class__.__name__})")
+        return
     if r.status_code not in (200, 206):
         logging.warning(f"  [error] {filepath.name} - HTTP {r.status_code}")
         return
