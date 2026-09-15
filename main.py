@@ -476,18 +476,21 @@ def download_announcements(cookies, course_id, course_dir: Path):
     for a in announcements:
         posted = (a.get("posted_at") or "")[:10]
         title = a.get("title", "Untitled")
-        stem = sanitize(f"{posted}_{title}") if posted else sanitize(title)
+        # Announcement id keeps same-day, same-title posts from colliding.
+        stem = sanitize(f"{posted}_{title}_{a.get('id', '')}".strip("_"))
         md_file = ann_dir / f"{stem}.md"
-        if md_file.exists():
+        author = (a.get("author") or {}).get("display_name", "")
+        body = _html_to_text(a.get("message", ""))
+        content = (
+            f"# {title}\n\n- 게시: {a.get('posted_at', '')}\n- 작성자: {author}\n"
+            f"- 링크: {a.get('html_url', '')}\n\n{body}\n"
+        )
+        if md_file.exists() and md_file.read_text(encoding="utf-8") == content:
             logger.info(f"  [skip] {stem}")
         else:
-            author = (a.get("author") or {}).get("display_name", "")
-            body = _html_to_text(a.get("message", ""))
-            md_file.write_text(
-                f"# {title}\n\n- 게시: {a.get('posted_at', '')}\n- 작성자: {author}\n- 링크: {a.get('html_url', '')}\n\n{body}\n",
-                encoding="utf-8",
-            )
-            logger.info(f"  [new] {stem}")
+            # Rewritten on any change so instructor edits are picked up.
+            logger.info(f"  [{'update' if md_file.exists() else 'new'}] {stem}")
+            md_file.write_text(content, encoding="utf-8")
         _download_description_files(a.get("message", ""), ann_dir / stem, cookies)
 
 

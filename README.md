@@ -70,8 +70,8 @@ downloads/
     _assignments/
       <assignment>.html
     _announcements/
-      <date>_<title>.md
-      <date>_<title>/          # files linked from the announcement
+      <date>_<title>_<id>.md
+      <date>_<title>_<id>/     # files linked from the announcement
     _videos/
       <lecture>.mp4
 ```
