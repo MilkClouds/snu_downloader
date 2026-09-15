@@ -1,5 +1,6 @@
 import argparse
 import functools
+import html as html_module
 import json
 import logging
 import re
@@ -198,6 +199,10 @@ def get_assignments(cookies, course_id):
 
 def get_modules(cookies, course_id):
     return api_get_all(f"/courses/{course_id}/modules", cookies, {"include[]": "items"})
+
+
+def get_announcements(cookies, course_id):
+    return api_get_all("/announcements", cookies, {"context_codes[]": f"course_{course_id}"})
 
 
 # --- Video download ---
@@ -451,6 +456,44 @@ def _download_description_files(description_html: str, dest_dir: Path, cookies):
         download_file(url, filepath, cookies=cookies)
 
 
+def _html_to_text(html: str) -> str:
+    """Flatten Canvas rich text to plain text, one paragraph per line."""
+    text = re.sub(r"<br\s*/?>|</p>|</div>|</li>", "\n", html or "", flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html_module.unescape(text)
+    lines = [re.sub(r"[ \t\xa0]+", " ", ln).strip() for ln in text.splitlines()]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def download_announcements(cookies, course_id, course_dir: Path):
+    """Save announcements as markdown under _announcements/, with linked files beside them."""
+    announcements = get_announcements(cookies, course_id)
+    if not announcements:
+        return
+    logger.info(f"\n  공지 ({len(announcements)}개)")
+    ann_dir = course_dir / "_announcements"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    for a in announcements:
+        posted = (a.get("posted_at") or "")[:10]
+        title = a.get("title", "Untitled")
+        # Announcement id keeps same-day, same-title posts from colliding.
+        stem = sanitize(f"{posted}_{title}_{a.get('id', '')}".strip("_"))
+        md_file = ann_dir / f"{stem}.md"
+        author = (a.get("author") or {}).get("display_name", "")
+        body = _html_to_text(a.get("message", ""))
+        content = (
+            f"# {title}\n\n- 게시: {a.get('posted_at', '')}\n- 작성자: {author}\n"
+            f"- 링크: {a.get('html_url', '')}\n\n{body}\n"
+        )
+        if md_file.exists() and md_file.read_text(encoding="utf-8") == content:
+            logger.info(f"  [skip] {stem}")
+        else:
+            # Rewritten on any change so instructor edits are picked up.
+            logger.info(f"  [{'update' if md_file.exists() else 'new'}] {stem}")
+            md_file.write_text(content, encoding="utf-8")
+        _download_description_files(a.get("message", ""), ann_dir / stem, cookies)
+
+
 # --- Download logic ---
 
 
@@ -511,6 +554,12 @@ def download_course(cookies, course, output_dir: Path):
                 _download_description_files(desc, assignment_dir / sanitize(name), cookies)
     except Exception as e:
         logger.warning(f"  과제 목록 조회 실패: {e}")
+
+    # --- Announcements ---
+    try:
+        download_announcements(cookies, course_id, course_dir)
+    except Exception as e:
+        logger.warning(f"  공지 조회 실패: {e}")
 
 
 # --- Main ---
