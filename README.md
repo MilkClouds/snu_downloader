@@ -7,6 +7,7 @@ Download lecture files, videos, and assignment info from SNU eTL (Canvas LMS).
 - **Files**: Download all files in a course, preserving the eTL folder structure
 - **Videos**: SNU-CMS lecture videos and YouTube-embedded videos
 - **Assignments**: Save assignment details (due date, points, submission type) as HTML
+- **Announcements**: Save each announcement as Markdown, plus any files it links
 - **Semester filter**: Download only courses matching a specific semester (e.g. `2026-1`)
 - **Incremental**: Skips already-downloaded files on re-run
 - **Session caching**: Login once, reuse the session until it expires (`--logout` to clear)
@@ -68,6 +69,9 @@ downloads/
       slides.pptx
     _assignments/
       <assignment>.html
+    _announcements/
+      <date>_<title>.md
+      <date>_<title>/          # files linked from the announcement
     _videos/
       <lecture>.mp4
 ```
