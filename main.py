@@ -9,6 +9,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 import urllib3
@@ -39,6 +40,20 @@ def yes_or_no(question):
 
 def sanitize(name: str) -> str:
     return re.sub(r'[\\/:"*?<>|]+', "", name)
+
+
+def ensure_extension(display_name: str, filename: str | None) -> str:
+    """Restore the extension eTL sometimes omits from `display_name`.
+
+    Google Drive adds it back on disk, so the next run would not find the file
+    and would download a duplicate.
+    """
+    if not filename:
+        return display_name
+    suffix = Path(unquote(filename)).suffix
+    if suffix and not display_name.lower().endswith(suffix.lower()):
+        return display_name + suffix
+    return display_name
 
 
 REQUEST_TIMEOUT = (10, 60)  # (connect, read) seconds
@@ -519,7 +534,7 @@ def download_course(cookies, course, output_dir: Path):
             # Strip "course files/" prefix, use eTL folder structure directly
             folder_path = re.sub(r"^course files/?", "", folder_path)
             file_dir = course_dir / folder_path
-            filepath = file_dir / sanitize(f["display_name"])
+            filepath = file_dir / sanitize(ensure_extension(f["display_name"], f.get("filename")))
             download_file(f["url"], filepath, cookies=cookies, remote_size=f.get("size"))
     except Exception as e:
         logger.warning(f"  파일 목록 조회 실패: {e}")
