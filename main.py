@@ -408,6 +408,11 @@ def _get_cms_video_url(content_id: str) -> str | None:
         # Current format: <main_media><desktop|mobile><html5><media_uri>URL</media_uri>
         try:
             root = ET.fromstring(r.text)
+            # "upf" content: service_root media_uri is a template ending in
+            # [MEDIA_FILE]; the file name is the text of <main_media>.
+            media_file = next(
+                (t for el in root.iterfind(".//main_media") if (t := (el.text or "").strip())), "screen.mp4"
+            )
             for path in (
                 ".//main_media/desktop/html5/media_uri",
                 ".//main_media/mobile/html5/media_uri",
@@ -416,7 +421,7 @@ def _get_cms_video_url(content_id: str) -> str | None:
                 for el in root.iterfind(path):
                     uri = (el.text or "").strip()
                     if uri.startswith("https://"):
-                        return uri
+                        return uri.replace("[MEDIA_FILE]", media_file)
         except ET.ParseError:
             pass
         # Legacy format: method="progressive" target="all">BASE[MEDIA_FILE]
