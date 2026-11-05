@@ -123,7 +123,7 @@ def _load_cookies():
     if COOKIE_FILE.exists():
         try:
             cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
-            r = requests.get(f"{API_ROOT}/users/self", cookies=cookies)
+            r = requests.get(f"{API_ROOT}/users/self", cookies=cookies, timeout=REQUEST_TIMEOUT)
             if r.status_code == 200:
                 logger.info("저장된 쿠키로 로그인 성공!")
                 return cookies
@@ -180,7 +180,7 @@ def api_get_all(endpoint, cookies, params=None):
     url = f"{API_ROOT}{endpoint}"
     results = []
     while url:
-        r = requests.get(url, cookies=cookies, params=params)
+        r = requests.get(url, cookies=cookies, params=params, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         text = r.text.removeprefix("while(1);")
         results.extend(json.loads(text))
@@ -380,6 +380,7 @@ def _download_attendance_video(driver, course_id, attendance_item_id, html_url, 
         r = requests.get(
             f"{ETL_ROOT}/learningx/api/v1/courses/{course_id}/attendance_items/{attendance_item_id}",
             headers={"Authorization": f"Bearer {token}"},
+            timeout=REQUEST_TIMEOUT,
         )
         if r.status_code != 200:
             logger.info(f"  [skip] {title} (attendance API HTTP {r.status_code})")
@@ -401,7 +402,8 @@ def _get_cms_video_url(content_id: str) -> str | None:
     """Fetch actual video CDN URL from SNU-CMS content API."""
     try:
         r = requests.get(
-            f"https://lcms.snu.ac.kr/viewer/ssplayer/uniplayer_support/content.php?content_id={content_id}"
+            f"https://lcms.snu.ac.kr/viewer/ssplayer/uniplayer_support/content.php?content_id={content_id}",
+            timeout=REQUEST_TIMEOUT,
         )
         if r.status_code != 200:
             return None
@@ -662,7 +664,7 @@ if __name__ == "__main__":
         if args.lectureId == "all":
             courses = get_courses(cookies, semester=args.semester)
         else:
-            r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies)
+            r = requests.get(f"{API_ROOT}/courses/{args.lectureId}", cookies=cookies, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
             courses = [json.loads(r.text.removeprefix("while(1);"))]
 
